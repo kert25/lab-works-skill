@@ -4,6 +4,7 @@
 //
 // Режимы:
 //   node cdp.js launch [--port 9222] [--url U] [--size 1280,900] [--headless]
+//                      [--profile-dir path]
 //         запускает Edge с --remote-debugging-port и ждёт готовности HTTP-эндпоинта
 //   node cdp.js run [действия...] [--port 9222] [--match substr] [--timeout 15000]
 //         подключается к открытой вкладке (или создаёт новую через --url) и
@@ -33,10 +34,11 @@
 //         обработать уже открытый JS-диалог (Page.handleJavaScriptDialog)
 //   node cdp.js close [--match substr] [--url U] [--port 9222]
 //         закрыть подходящие вкладки
-//   node cdp.js quit [--port 9222]
+//   node cdp.js quit [--port 9222] [--profile-dir path]
 //         закрыть браузер целиком
-//   node cdp.js reset [--port 9222]
-//         закрыть CDP-браузер, если он доступен, и удалить временный профиль
+//   node cdp.js reset [--port 9222] [--profile-dir path]
+//         закрыть CDP-браузер, если он доступен, и удалить временный профиль;
+//         удаление повторяется до трёх раз при временной блокировке файлов
 "use strict";
 
 const { spawn } = require("child_process");
@@ -48,6 +50,10 @@ const { pathToFileURL } = require("url");
 const EDGE = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const DEFAULT_PORT = 9222;
 const PROFILE_DIR = path.join(os.tmpdir(), "edge-cdp-profile");
+
+function profileDir(opts) {
+  return path.resolve(String(opts["profile-dir"] || PROFILE_DIR));
+}
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -149,9 +155,10 @@ function fileUrl(filePath) {
 
 async function cmdLaunch(opts) {
   const port = Number(opts.port || DEFAULT_PORT);
+  const profile = profileDir(opts);
   const args = [
     `--remote-debugging-port=${port}`,
-    `--user-data-dir=${PROFILE_DIR}`,
+    `--user-data-dir=${profile}`,
     "--no-first-run", "--no-default-browser-check", "--noerrdialogs",
     `--window-size=${opts.size || "1280,900"}`,
   ];
@@ -414,25 +421,46 @@ async function cmdQuit(opts) {
   cdp.close();
 }
 
+async function removeProfileWithRetries(profile, attempts = 3, remove = fs.rmSync) {
+  if (!fs.existsSync(profile)) {
+    print("PROFILE ABSENT " + profile);
+    return "absent";
+  }
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      remove(profile, { recursive: true, force: true });
+      if (!fs.existsSync(profile)) {
+        print("PROFILE REMOVED " + profile + " attempt=" + attempt);
+        return "removed";
+      }
+      lastError = new Error("каталог всё ещё существует");
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt < attempts) {
+      print("PROFILE RETRY " + profile + " attempt=" + attempt + " reason=" + lastError.message);
+      await sleep(500);
+    }
+  }
+  throw new Error("не удалось удалить профиль после " + attempts + " попыток: " + profile + " (" + lastError.message + ")");
+}
+
 async function cmdReset(opts) {
   const port = Number(opts.port || DEFAULT_PORT);
+  const profile = profileDir(opts);
   try {
-    await cmdQuit({ port });
+    await cmdQuit({ port, "profile-dir": profile });
     await sleep(500);
   } catch (error) {
     // Браузер мог уже завершиться или порт быть занят другим процессом.
     print("RESET: CDP browser unavailable (" + error.message + ")");
   }
-  try {
-    fs.rmSync(PROFILE_DIR, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
-    print("PROFILE REMOVED " + PROFILE_DIR);
-  } catch (error) {
-    throw new Error("не удалось удалить временный профиль: " + error.message);
-  }
+  await removeProfileWithRetries(profile);
 }
 
-(async () => {
-  const [mode, ...rest] = process.argv.slice(2);
+async function main() {
+  const [mode] = process.argv.slice(2);
   const opts = parseArgs(process.argv.slice(3));
   try {
     switch (mode) {
@@ -446,6 +474,12 @@ async function cmdReset(opts) {
     }
   } catch (e) {
     console.error("ERROR " + e.message);
-    process.exit(1);
+    process.exitCode = 1;
   }
-})();
+}
+
+if (require.main === module) {
+  main();
+} else {
+  module.exports = { parseArgs, profileDir, removeProfileWithRetries };
+}

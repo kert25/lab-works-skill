@@ -140,5 +140,95 @@ class RunnerBuildTest(unittest.TestCase):
             lab_runner.quality_gate(self.root, 1, lab)
 
 
+class RunnerStateValidationTest(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tempdir.name)
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def test_legacy_minimal_lab_state_is_valid(self):
+        lab_runner.validate_lab_state(
+            self.root, 1, {"status": "not_started", "theme": "Topic"}
+        )
+
+    def test_state_validation_accepts_portable_metadata(self):
+        lab = {
+            "status": "ready_for_review",
+            "theme": "Topic",
+            "directory": "ЛР1",
+            "artifacts": ["ЛР1/source.py", "ЛР1/screenshots"],
+            "commands": {"check": "py _tools/check.py"},
+            "command_templates": {"server": "py -m http.server <port>"},
+            "tooling": {"inspector": "bundled:inspect_docx"},
+            "verification": {
+                "status": "passed",
+                "checked_at": "2026-10-01T12:34:56Z",
+                "checks": ["artifacts"],
+                "warnings": [],
+            },
+        }
+        lab_runner.validate_lab_state(self.root, 1, lab)
+
+    def test_state_validation_rejects_absolute_command_path(self):
+        with self.assertRaisesRegex(SystemExit, "абсолютный путь"):
+            lab_runner.validate_lab_state(
+                self.root, 1, {"theme": "Topic", "commands": {"check": "py C:/Users/test/tool.py"}}
+            )
+
+    def test_state_validation_rejects_duplicate_artifacts(self):
+        with self.assertRaisesRegex(SystemExit, "дублирующиеся"):
+            lab_runner.validate_lab_state(
+                self.root, 1, {"theme": "Topic", "artifacts": ["ЛР1/a.txt", "ЛР1\\a.txt"]}
+            )
+
+    def test_state_validation_rejects_unknown_bundled_tool(self):
+        with self.assertRaisesRegex(SystemExit, "неизвестный"):
+            lab_runner.validate_lab_state(
+                self.root, 1, {"theme": "Topic", "tooling": {"tool": "bundled:unknown"}}
+            )
+
+    def test_validate_state_requires_no_report_outputs(self):
+        state = {"labs": {"1": {"theme": "Topic"}}}
+        lab_runner.validate_state(self.root, 1, state, state["labs"]["1"])
+
+
+class RunnerQualityRecordTest(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tempdir.name)
+        self.lab_dir = self.root / "ЛР1"
+        self.lab_dir.mkdir()
+        for name in ("Отчет_ЛР1.docx", "text.docx"):
+            with zipfile.ZipFile(self.lab_dir / name, "w") as archive:
+                archive.writestr("word/document.xml", "<document />")
+        (self.lab_dir / "Отчет_ЛР1.pdf").write_bytes(b"%PDF-1.7\n")
+        (self.lab_dir / "content.json").write_text("[]", encoding="utf-8")
+        self.lab = {
+            "theme": "Topic",
+            "artifacts": ["ЛР1/Отчет_ЛР1.docx", "ЛР1/Отчет_ЛР1.pdf", "ЛР1/text.docx"],
+        }
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def test_quality_gate_writes_portable_record(self):
+        lab_runner.quality_gate(self.root, 1, self.lab)
+        record = json.loads((self.lab_dir / "quality_gate.json").read_text(encoding="utf-8"))
+        self.assertEqual(record["schema_version"], 1)
+        self.assertEqual(record["status"], "passed")
+        self.assertTrue(record["checked_at"].endswith("Z"))
+        self.assertEqual(record["files"], ["ЛР1/Отчет_ЛР1.docx", "ЛР1/Отчет_ЛР1.pdf", "ЛР1/text.docx"])
+
+    def test_failed_gate_preserves_existing_record(self):
+        record_path = self.lab_dir / "quality_gate.json"
+        record_path.write_text('{"status": "previous"}\n', encoding="utf-8")
+        (self.lab_dir / "Отчет_ЛР1.pdf").write_bytes(b"not a PDF")
+        with self.assertRaisesRegex(SystemExit, "сигнатуры"):
+            lab_runner.quality_gate(self.root, 1, self.lab)
+        self.assertEqual(record_path.read_text(encoding="utf-8"), '{"status": "previous"}\n')
+
+
 if __name__ == "__main__":
     unittest.main()
