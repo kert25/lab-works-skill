@@ -1,6 +1,6 @@
 ---
 name: lab-works
-description: Универсальный скилл для лабораторных работ по программированию и ИТ-дисциплинам в любом вузе — полный цикл от задания до сдачи: код, скриншоты, отчёты .docx и .pdf, титульный лист, конспект для защиты, git. Использовать, когда пользователь просит «сделай ЛР», «выполни лабораторную №N», «оформи отчёт по лабе», «подготовь лабораторную к сдаче/защите», «сделай скриншоты для отчёта», а также когда упоминает методичку, вариант, титульный лист, make_docx.py, Отчет_ЛРN.docx или text.docx.
+description: "Use this skill whenever the user asks to complete, format, or prepare for defense a laboratory work in programming or any IT discipline at a university. Triggers include: 'сделай ЛР', 'выполни лабораторную №N', 'оформи отчёт по лабе', 'подготовь лабораторную к сдаче/защите', 'сделай скриншоты для отчёта', as well as any mention of a методичка, вариант, титульный лист, make_docx.py, Отчет_ЛРN.docx, or text.docx. Covers the full cycle from assignment to submission: completing the task (code), screenshots, generating a report in .docx and .pdf with a title page, a defense cheat-sheet (text.docx), and committing results to git. All data — university, student, teacher, variant — comes from _context.json or direct user answers, never from assumptions. Do NOT use for term papers, essays, quizzes, or tasks unrelated to laboratory work."
 ---
 
 # Лабораторные работы по ИТ-дисциплинам — универсальный workflow
