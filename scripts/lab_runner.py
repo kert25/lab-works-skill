@@ -109,17 +109,59 @@ def build_report(root, lab_number, lab):
     print("REPORT %s" % report_path)
 
 
+def verify_content_references(content_path):
+    """Ensure report JSON does not reference missing source files or images."""
+    try:
+        with content_path.open(encoding="utf-8-sig") as stream:
+            content = json.load(stream)
+    except json.JSONDecodeError as exc:
+        fail("некорректный JSON в content: %s" % exc)
+    if not isinstance(content, list):
+        fail("content должен быть JSON-списком: %s" % content_path)
+    missing = []
+    for index, item in enumerate(content):
+        if not isinstance(item, dict):
+            fail("content[%d] должен быть объектом" % index)
+        for key in ("codefile", "img"):
+            if key not in item:
+                continue
+            value = item[key]
+            if not isinstance(value, str) or not value.strip():
+                fail("content[%d].%s должен быть непустой строкой" % (index, key))
+            path = Path(value)
+            if path.is_absolute():
+                fail("content[%d].%s должен быть относительным путём" % (index, key))
+            resolved = content_path.parent / path
+            if not resolved.is_file():
+                missing.append(str(resolved))
+            else:
+                print("OK %s" % resolved)
+    if missing:
+        fail("не найдены ссылки из content: %s" % "; ".join(missing))
+
+
 def verify_report(root, lab_number, lab):
-    _, report_path, _ = paths_for(root, lab_number, lab)
+    content_path, report_path, _ = paths_for(root, lab_number, lab)
+    if not content_path.is_file():
+        fail("не найден content: %s" % content_path)
+    verify_content_references(content_path)
     artifacts = lab.get("artifacts", [str(report_path)])
     if not isinstance(artifacts, list) or not artifacts:
         fail("labs.%d.artifacts должен быть непустым списком" % lab_number)
-    missing = [str(resolve(root, artifact)) for artifact in artifacts
-               if not resolve(root, artifact).exists()]
+    missing = []
+    for artifact in artifacts:
+        if not isinstance(artifact, str) or not artifact.strip():
+            fail("labs.%d.artifacts должен содержать непустые строки" % lab_number)
+        artifact_path = Path(artifact)
+        if artifact_path.is_absolute():
+            fail("labs.%d.artifacts должен содержать относительные пути" % lab_number)
+        resolved = root / artifact_path
+        if not resolved.exists():
+            missing.append(str(resolved))
+        else:
+            print("OK %s" % resolved)
     if missing:
         fail("не найдены артефакты: %s" % "; ".join(missing))
-    for artifact in artifacts:
-        print("OK %s" % resolve(root, artifact))
 
 
 def main():

@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """Инспектор .docx: печатает структуру абзацев word/document.xml (текст + форматирование).
-Использование: python inspect_docx.py <файл.docx> [количество_абзацев]"""
+
+Использование:
+    python inspect_docx.py <файл.docx> [количество_абзацев]
+    python inspect_docx.py <файл.docx> --summary
+"""
+import argparse
 import sys, zipfile, xml.etree.ElementTree as ET
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -28,15 +33,30 @@ def cell_text(cell):
     return "\n".join(paragraph_text(p) for p in cell.findall(W + "p"))
 
 def main():
-    docx = sys.argv[1]
-    limit = int(sys.argv[2]) if len(sys.argv) > 2 else 10 ** 9
-    with zipfile.ZipFile(docx) as z:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("docx", help="путь к DOCX")
+    parser.add_argument("limit", nargs="?", type=int, default=10 ** 9,
+                        help="максимальное число выводимых абзацев")
+    parser.add_argument("--summary", action="store_true",
+                        help="вывести только сводку для quality gate")
+    args = parser.parse_args()
+    with zipfile.ZipFile(args.docx) as z:
         root = ET.fromstring(z.read("word/document.xml"))
     body = root.find(W + "body")
+    paragraphs = body.findall(W + "p")
+    tables = body.findall(W + "tbl")
+    drawings = len(root.findall(".//" + W + "drawing"))
+    page_breaks = len(root.findall(".//" + W + "br[@" + W + "type='page']"))
+    if args.summary:
+        print("DOCX %s" % args.docx)
+        print("SUMMARY paragraphs=%d tables=%d drawings=%d page_breaks=%d" %
+              (len(paragraphs), len(tables), drawings, page_breaks))
+        return
+    limit = args.limit
     ppr_tags = ("pStyle", "jc", "spacing", "ind", "textAlignment")
-    for i, p in enumerate(body.findall(W + "p")):
+    for i, p in enumerate(paragraphs):
         if i >= limit:
-            print("... (всего абзацев: %d)" % len(body.findall(W + 'p')))
+            print("... (всего абзацев: %d)" % len(paragraphs))
             break
         info = []
         ppr = p.find(W + "pPr")
@@ -56,7 +76,7 @@ def main():
                 txt = "[РИСУНОК]"
             runs.append("[%s]%r" % (ri or "-", br + txt))
         print("P%02d %s :: %s" % (i, " ".join(info) or "-", " | ".join(runs) if runs else "(пустой)"))
-    for table_number, table in enumerate(body.findall(W + "tbl"), 1):
+    for table_number, table in enumerate(tables, 1):
         rows = table.findall(W + "tr")
         print("TABLE %d rows=%d" % (table_number, len(rows)))
         for row_number, row in enumerate(rows, 1):

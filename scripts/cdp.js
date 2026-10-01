@@ -34,6 +34,8 @@
 //         закрыть подходящие вкладки
 //   node cdp.js quit [--port 9222]
 //         закрыть браузер целиком
+//   node cdp.js reset [--port 9222]
+//         закрыть CDP-браузер, если он доступен, и удалить временный профиль
 "use strict";
 
 const { spawn } = require("child_process");
@@ -43,6 +45,7 @@ const os = require("os");
 
 const EDGE = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const DEFAULT_PORT = 9222;
+const PROFILE_DIR = path.join(os.tmpdir(), "edge-cdp-profile");
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -142,7 +145,7 @@ async function cmdLaunch(opts) {
   const port = Number(opts.port || DEFAULT_PORT);
   const args = [
     `--remote-debugging-port=${port}`,
-    `--user-data-dir=${path.join(os.tmpdir(), "edge-cdp-profile")}`,
+    `--user-data-dir=${PROFILE_DIR}`,
     "--no-first-run", "--no-default-browser-check", "--noerrdialogs",
     `--window-size=${opts.size || "1280,900"}`,
   ];
@@ -402,6 +405,23 @@ async function cmdQuit(opts) {
   cdp.close();
 }
 
+async function cmdReset(opts) {
+  const port = Number(opts.port || DEFAULT_PORT);
+  try {
+    await cmdQuit({ port });
+    await sleep(500);
+  } catch (error) {
+    // Браузер мог уже завершиться или порт быть занят другим процессом.
+    print("RESET: CDP browser unavailable (" + error.message + ")");
+  }
+  try {
+    fs.rmSync(PROFILE_DIR, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+    print("PROFILE REMOVED " + PROFILE_DIR);
+  } catch (error) {
+    throw new Error("не удалось удалить временный профиль: " + error.message);
+  }
+}
+
 (async () => {
   const [mode, ...rest] = process.argv.slice(2);
   const opts = parseArgs(process.argv.slice(3));
@@ -412,7 +432,8 @@ async function cmdQuit(opts) {
       case "dialog": await cmdDialog(opts); break;
       case "close": await cmdClose(opts); break;
       case "quit": await cmdQuit(opts); break;
-      default: throw new Error("неизвестный режим: " + mode + " (launch|run|dialog|close|quit)");
+      case "reset": await cmdReset(opts); break;
+      default: throw new Error("неизвестный режим: " + mode + " (launch|run|dialog|close|quit|reset)");
     }
   } catch (e) {
     console.error("ERROR " + e.message);

@@ -93,6 +93,24 @@ class RunnerBuildTest(unittest.TestCase):
             self.root, 1, {"artifacts": ["ЛР1/screenshots"]}
         )
 
+    def test_verify_report_checks_code_and_image_references(self):
+        lab_dir = self.root / "ЛР1"
+        (lab_dir / "Ex1.html").write_text("<html></html>", encoding="utf-8")
+        (lab_dir / "shot.png").write_bytes(b"PNG")
+        (lab_dir / "content.json").write_text(
+            json.dumps([{"codefile": "Ex1.html"}, {"img": "shot.png"}]),
+            encoding="utf-8",
+        )
+        lab_runner.verify_report(self.root, 1, {"artifacts": ["ЛР1/Ex1.html"]})
+
+    def test_verify_report_rejects_missing_content_reference(self):
+        lab_dir = self.root / "ЛР1"
+        (lab_dir / "content.json").write_text(
+            json.dumps([{"img": "missing.png"}]), encoding="utf-8"
+        )
+        with self.assertRaisesRegex(SystemExit, "ссылки из content"):
+            lab_runner.verify_report(self.root, 1, {"artifacts": ["ЛР1"]})
+
 
 if __name__ == "__main__":
     unittest.main()
