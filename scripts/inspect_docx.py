@@ -21,6 +21,12 @@ def rpr_info(rpr):
             parts.append(tag)
     return " ".join(parts)
 
+def paragraph_text(p):
+    return "".join(t.text or "" for t in p.iter(W + "t"))
+
+def cell_text(cell):
+    return "\n".join(paragraph_text(p) for p in cell.findall(W + "p"))
+
 def main():
     docx = sys.argv[1]
     limit = int(sys.argv[2]) if len(sys.argv) > 2 else 10 ** 9
@@ -50,6 +56,12 @@ def main():
                 txt = "[РИСУНОК]"
             runs.append("[%s]%r" % (ri or "-", br + txt))
         print("P%02d %s :: %s" % (i, " ".join(info) or "-", " | ".join(runs) if runs else "(пустой)"))
+    for table_number, table in enumerate(body.findall(W + "tbl"), 1):
+        rows = table.findall(W + "tr")
+        print("TABLE %d rows=%d" % (table_number, len(rows)))
+        for row_number, row in enumerate(rows, 1):
+            cells = row.findall(W + "tc")
+            print("  TR %d :: %s" % (row_number, " | ".join(repr(cell_text(cell)) for cell in cells)))
     sect = body.find(W + "sectPr")
     if sect is not None:
         pg = sect.find(W + "pgSz"); mar = sect.find(W + "pgMar")

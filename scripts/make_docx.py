@@ -34,6 +34,7 @@ content.json — список элементов:
     {"code": "текст программы"}                — листинг Courier New 12 pt
     {"codefile": "путь/к/файлу"}               — листинг из файла (UTF-8)
     {"img": "путь.png", "caption": "Подпись"}  — рисунок по центру + подпись 12 pt
+    {"table": {"rows": [[...]], "widths": [dxa...], "header": true}} — таблица
     {"pb": true}                               — разрыв страницы
 Относительные пути в content.json разрешаются от каталога самого content.json.
 """
@@ -47,6 +48,7 @@ PIC = "http://schemas.openxmlformats.org/drawingml/2006/picture"
 
 TNR = '<w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>'
 COURIER = '<w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New"/>'
+TABLE_WIDTH = 9355
 
 def esc(s):
     return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -168,6 +170,47 @@ def image_xml(png_path, rid, img_id):
     ) % {"wp": WP, "a": A, "pic": PIC, "w": emu_w, "h": emu_h, "id": img_id, "rid": rid}
     return drawing, data
 
+
+def table_xml(spec):
+    """Возвращает OOXML-таблицу из {rows, widths?, header?}."""
+    rows = spec.get("rows")
+    if not isinstance(rows, list) or not rows or not all(isinstance(row, list) and row for row in rows):
+        raise ValueError("table.rows должен быть непустым списком непустых строк")
+    columns = len(rows[0])
+    if any(len(row) != columns for row in rows):
+        raise ValueError("все строки table.rows должны иметь одинаковое число ячеек")
+    widths = spec.get("widths")
+    if widths is None:
+        widths = [TABLE_WIDTH // columns] * columns
+        widths[-1] += TABLE_WIDTH - sum(widths)
+    if (not isinstance(widths, list) or len(widths) != columns or
+            any(not isinstance(width, int) or width <= 0 for width in widths)):
+        raise ValueError("table.widths должен содержать положительную ширину для каждой колонки")
+    if sum(widths) > TABLE_WIDTH:
+        raise ValueError("сумма table.widths не должна превышать %d dxa" % TABLE_WIDTH)
+    header = spec.get("header", True)
+    borders = ('<w:tblBorders><w:top w:val="single" w:sz="4" w:color="auto"/>'
+               '<w:left w:val="single" w:sz="4" w:color="auto"/>'
+               '<w:bottom w:val="single" w:sz="4" w:color="auto"/>'
+               '<w:right w:val="single" w:sz="4" w:color="auto"/>'
+               '<w:insideH w:val="single" w:sz="4" w:color="auto"/>'
+               '<w:insideV w:val="single" w:sz="4" w:color="auto"/></w:tblBorders>')
+    out = ['<w:tbl><w:tblPr><w:tblW w:w="%d" w:type="dxa"/>%s</w:tblPr>' %
+           (sum(widths), borders)]
+    out.append('<w:tblGrid>%s</w:tblGrid>' % ''.join(
+        '<w:gridCol w:w="%d"/>' % width for width in widths))
+    for row_index, row in enumerate(rows):
+        cells = []
+        for width, value in zip(widths, row):
+            paragraphs = []
+            for line in str(value).split("\n"):
+                paragraphs.append(para(run(line if line else " ", b=bool(header and row_index == 0))))
+            shade = '<w:shd w:val="clear" w:fill="D9EAD3"/>' if header and row_index == 0 else ''
+            cells.append('<w:tc><w:tcPr><w:tcW w:w="%d" w:type="dxa"/>%s</w:tcPr>%s</w:tc>' %
+                         (width, shade, ''.join(paragraphs)))
+        out.append('<w:tr><w:trPr><w:cantSplit/></w:trPr>%s</w:tr>' % ''.join(cells))
+    return ''.join(out) + '</w:tbl>'
+
 CONTENT_TYPES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
@@ -230,6 +273,8 @@ def build(out, num, theme, content, workdir, ctx=None, title=True):
                 paras.append(code_block(f.read()))
         elif "code" in item:
             paras.append(code_block(item["code"]))
+        elif "table" in item:
+            paras.append(table_xml(item["table"]))
         elif "img" in item:
             rid = "rIdImg%d" % rid_n
             drawing, data = image_xml(resolve(item["img"]), rid, rid_n)
