@@ -9,6 +9,7 @@
 //         подключается к открытой вкладке (или создаёт новую через --url) и
 //         выполняет действия в порядке следования аргументов:
 //           --url U            открыть URL в текущей/новой вкладке (ждёт загрузки)
+//           --file path        открыть локальный файл; путь безопасно преобразуется в file:/// URL
 //           --eval "код"       выполнить JS в странице, напечатать результат
 //           --eval-file f.js   то же из файла
 //           --nowait-eval "код" отправить JS не дожидаясь ответа (для alert/confirm/prompt)
@@ -42,6 +43,7 @@ const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const { pathToFileURL } = require("url");
 
 const EDGE = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const DEFAULT_PORT = 9222;
@@ -139,6 +141,10 @@ class CDP {
 
 function print(obj) { console.log(typeof obj === "string" ? obj : JSON.stringify(obj)); }
 
+function fileUrl(filePath) {
+  return pathToFileURL(path.resolve(String(filePath))).href;
+}
+
 // --- запуск Edge ------------------------------------------------------------
 
 async function cmdLaunch(opts) {
@@ -163,9 +169,10 @@ async function cmdRun(opts) {
   const port = Number(opts.port || DEFAULT_PORT);
   await waitReady(port);
   let target;
-  if (opts.url) {
-    // ищем вкладку с этим URL, иначе открываем новую
-    const u = encodeURI(opts.url);
+  const initialUrl = opts.file ? fileUrl(opts.file) : opts.url;
+  if (initialUrl) {
+    // URL, созданный pathToFileURL, уже экранирован и не должен кодироваться повторно.
+    const u = opts.file ? initialUrl : encodeURI(initialUrl);
     const pages = (await listTargets(port)).filter(t => t.type === "page");
     target = pages.find(t => t.url.startsWith(u)) ||
              pages.find(t => t.url === "about:blank");
@@ -208,6 +215,7 @@ async function cmdRun(opts) {
   for (let i = 0; i < raw.length; i++) {
     const a = raw[i];
     if (a === "--url") { push("url", raw[++i]); }
+    else if (a === "--file") { push("file", fileUrl(raw[++i])); }
     else if (a === "--eval") { push("eval", raw[++i]); }
     else if (a === "--eval-file") { push("evalfile", raw[++i]); }
     else if (a === "--nowait-eval") { push("nowait-eval", raw[++i]); }
@@ -243,8 +251,9 @@ async function cmdRun(opts) {
 
   for (const act of evals) {
     switch (act.kind) {
-      case "url": {
-        const u = encodeURI(act.value);
+      case "url":
+      case "file": {
+        const u = act.kind === "file" ? act.value : encodeURI(act.value);
         const nav = cdp.send("Page.navigate", { url: u });
         // дождаться load или диалога
         await Promise.race([nav, sleep(opts.timeout || 15000)]);

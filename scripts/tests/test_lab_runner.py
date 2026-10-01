@@ -2,6 +2,7 @@
 import json
 import sys
 import tempfile
+import zipfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -110,6 +111,33 @@ class RunnerBuildTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(SystemExit, "ссылки из content"):
             lab_runner.verify_report(self.root, 1, {"artifacts": ["ЛР1"]})
+
+    def test_quality_gate_checks_report_pdf_and_cheat_sheet(self):
+        lab_dir = self.root / "ЛР1"
+        report = lab_dir / "Отчет_ЛР1.docx"
+        cheat_sheet = lab_dir / "text.docx"
+        for document in (report, cheat_sheet):
+            with zipfile.ZipFile(document, "w") as archive:
+                archive.writestr("word/document.xml", "<document />")
+        (lab_dir / "Отчет_ЛР1.pdf").write_bytes(b"%PDF-1.7\n")
+        lab = {
+            "artifacts": [
+                "ЛР1/Отчет_ЛР1.docx",
+                "ЛР1/Отчет_ЛР1.pdf",
+                "ЛР1/text.docx",
+            ]
+        }
+        lab_runner.quality_gate(self.root, 1, lab)
+
+    def test_quality_gate_rejects_invalid_pdf(self):
+        lab_dir = self.root / "ЛР1"
+        for name in ("Отчет_ЛР1.docx", "text.docx"):
+            with zipfile.ZipFile(lab_dir / name, "w") as archive:
+                archive.writestr("word/document.xml", "<document />")
+        (lab_dir / "Отчет_ЛР1.pdf").write_bytes(b"not a PDF")
+        lab = {"artifacts": ["ЛР1/Отчет_ЛР1.docx", "ЛР1/Отчет_ЛР1.pdf", "ЛР1/text.docx"]}
+        with self.assertRaisesRegex(SystemExit, "сигнатуры"):
+            lab_runner.quality_gate(self.root, 1, lab)
 
 
 if __name__ == "__main__":

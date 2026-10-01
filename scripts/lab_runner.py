@@ -4,6 +4,7 @@
 Usage:
     py lab_runner.py --root <project-root> --lab N --action build-report
     py lab_runner.py --root <project-root> --lab N --action verify-report
+    py lab_runner.py --root <project-root> --lab N --action quality-gate
 
 Theme names and Cyrillic paths are read from UTF-8 JSON instead of shell
 arguments. The selected lab record must contain `theme`; report content and
@@ -12,6 +13,7 @@ output paths default to the standard layout when omitted.
 import argparse
 import json
 import sys
+import zipfile
 from pathlib import Path
 
 from make_docx import build, load_context
@@ -164,19 +166,59 @@ def verify_report(root, lab_number, lab):
         fail("не найдены артефакты: %s" % "; ".join(missing))
 
 
+def required_file(root, path, label):
+    if not path.is_file():
+        fail("не найден %s: %s" % (label, path))
+    print("OK %s" % path)
+
+
+def verify_docx(path, label):
+    required_file(None, path, label)
+    try:
+        with zipfile.ZipFile(path) as archive:
+            if "word/document.xml" not in archive.namelist():
+                fail("%s не содержит word/document.xml: %s" % (label, path))
+    except zipfile.BadZipFile:
+        fail("%s не является корректным DOCX: %s" % (label, path))
+    print("DOCX %s" % path)
+
+
+def verify_pdf(path):
+    required_file(None, path, "PDF-отчёт")
+    if path.read_bytes()[:4] != b"%PDF":
+        fail("PDF-отчёт не начинается с сигнатуры %%PDF: %s" % path)
+    print("PDF %s" % path)
+
+
+def quality_gate(root, lab_number, lab):
+    """Check report inputs and all mandatory final documents without rebuilding them."""
+    verify_report(root, lab_number, lab)
+    _, report_path, _ = paths_for(root, lab_number, lab)
+    lab_dir = lab_directory(root, lab_number, lab)
+    pdf_path = resolve(root, lab.get("pdf", lab_dir / ("Отчет_ЛР%d.pdf" % lab_number)))
+    text_path = resolve(root, lab.get("text", lab_dir / "text.docx"))
+    verify_docx(report_path, "DOCX-отчёт")
+    verify_pdf(pdf_path)
+    verify_docx(text_path, "конспект text.docx")
+    print("QUALITY GATE PASSED: lab %d" % lab_number)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=".", help="корень проекта; по умолчанию текущий каталог")
     parser.add_argument("--lab", type=int, required=True, help="номер ЛР")
-    parser.add_argument("--action", required=True, choices=("build-report", "verify-report"))
+    parser.add_argument("--action", required=True,
+                        choices=("build-report", "verify-report", "quality-gate"))
     args = parser.parse_args()
     root = Path(args.root).resolve()
     state = load_state(root)
     lab = get_lab(state, args.lab)
     if args.action == "build-report":
         build_report(root, args.lab, lab)
-    else:
+    elif args.action == "verify-report":
         verify_report(root, args.lab, lab)
+    else:
+        quality_gate(root, args.lab, lab)
 
 
 if __name__ == "__main__":
