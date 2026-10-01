@@ -56,8 +56,31 @@ def resolve(root, value):
     return path if path.is_absolute() else root / path
 
 
+def relative_path(root, value, field, lab_number):
+    path = Path(value)
+    if path.is_absolute():
+        fail("labs.%d.%s должен быть относительным путём" % (lab_number, field))
+    return root / path
+
+
+def lab_directory(root, lab_number, lab):
+    directory = lab.get("directory")
+    if directory is None:
+        return root / ("ЛР%d" % lab_number)
+    if not isinstance(directory, str) or not directory.strip():
+        fail("labs.%d.directory должен быть непустой строкой" % lab_number)
+    return relative_path(root, directory, "directory", lab_number)
+
+
+def report_number_for(lab_number, lab):
+    report_number = lab.get("report_number", lab_number)
+    if isinstance(report_number, bool) or not isinstance(report_number, int):
+        fail("labs.%d.report_number должен быть целым числом" % lab_number)
+    return report_number
+
+
 def paths_for(root, lab_number, lab):
-    lab_dir = root / ("ЛР%d" % lab_number)
+    lab_dir = lab_directory(root, lab_number, lab)
     return (
         resolve(root, lab.get("content", lab_dir / "content.json")),
         resolve(root, lab.get("report", lab_dir / ("Отчет_ЛР%d.docx" % lab_number))),
@@ -66,6 +89,13 @@ def paths_for(root, lab_number, lab):
 
 
 def build_report(root, lab_number, lab):
+    methodical_guide = lab.get("methodical_guide")
+    if methodical_guide is not None:
+        if not isinstance(methodical_guide, str) or not methodical_guide.strip():
+            fail("labs.%d.methodical_guide должен быть непустой строкой" % lab_number)
+        guide_path = relative_path(root, methodical_guide, "methodical_guide", lab_number)
+        if not guide_path.is_file():
+            fail("не найдена methodical_guide: %s" % guide_path)
     content_path, report_path, context_path = paths_for(root, lab_number, lab)
     if not content_path.is_file():
         fail("не найден content: %s" % content_path)
@@ -74,7 +104,7 @@ def build_report(root, lab_number, lab):
     if not isinstance(content, list):
         fail("content должен быть JSON-списком: %s" % content_path)
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    build(str(report_path), lab_number, lab["theme"], content,
+    build(str(report_path), report_number_for(lab_number, lab), lab["theme"], content,
           str(content_path.parent), load_context(str(context_path)))
     print("REPORT %s" % report_path)
 
@@ -85,7 +115,7 @@ def verify_report(root, lab_number, lab):
     if not isinstance(artifacts, list) or not artifacts:
         fail("labs.%d.artifacts должен быть непустым списком" % lab_number)
     missing = [str(resolve(root, artifact)) for artifact in artifacts
-               if not resolve(root, artifact).is_file()]
+               if not resolve(root, artifact).exists()]
     if missing:
         fail("не найдены артефакты: %s" % "; ".join(missing))
     for artifact in artifacts:
