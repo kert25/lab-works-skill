@@ -12,6 +12,7 @@ arguments. The selected lab record must contain `theme`; report content and
 output paths default to the standard layout when omitted.
 """
 import argparse
+import hashlib
 import json
 import os
 import posixpath
@@ -27,6 +28,7 @@ from make_docx import build, load_context
 VALID_STATUSES = {"not_started", "in_progress", "ready_for_review", "completed"}
 VALID_VERIFICATION_STATUSES = {"passed", "failed", "blocked"}
 BUNDLED_TOOLS = {
+    "lab_runner": "lab_runner.py",
     "inspect_docx": "inspect_docx.py",
     "pdf_text": "pdf_text.py",
     "docx2pdf": "docx2pdf.ps1",
@@ -307,11 +309,28 @@ def relative_to_root(root, path):
         fail("файл quality gate находится вне корня проекта: %s" % path)
 
 
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+def quality_hashes(root, lab_number, lab, report_path, pdf_path, text_path):
+    content_path, _, context_path = paths_for(root, lab_number, lab)
+    quality_path = lab_directory(root, lab_number, lab) / "quality_gate.json"
+    candidates = [content_path, context_path, report_path, pdf_path, text_path]
+    for artifact in lab.get("artifacts", []):
+        path = root / normalized_relative_path(artifact)
+        if path != quality_path and path.is_file():
+            candidates.append(path)
+    return {relative_to_root(root, path): sha256_file(path) for path in sorted(set(candidates))}
+
 def write_quality_record(root, lab_number, lab, report_path, pdf_path, text_path):
     lab_dir = lab_directory(root, lab_number, lab)
     lab_dir.mkdir(parents=True, exist_ok=True)
     record = {
-        "schema_version": 1,
+        "schema_version": 2,
         "lab": lab_number,
         "report_number": report_number_for(lab_number, lab),
         "status": "passed",
@@ -322,6 +341,7 @@ def write_quality_record(root, lab_number, lab, report_path, pdf_path, text_path
             relative_to_root(root, pdf_path),
             relative_to_root(root, text_path),
         ],
+        "sha256": quality_hashes(root, lab_number, lab, report_path, pdf_path, text_path),
     }
     output = lab_dir / "quality_gate.json"
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=lab_dir, delete=False,
@@ -335,6 +355,27 @@ def write_quality_record(root, lab_number, lab, report_path, pdf_path, text_path
         temporary.unlink(missing_ok=True)
     print("QUALITY RECORD %s" % output)
 
+
+def verify_quality_record(root, lab_number, lab):
+    """Verify that a quality record exists and still matches all tracked files."""
+    _, report_path, _ = paths_for(root, lab_number, lab)
+    lab_dir = lab_directory(root, lab_number, lab)
+    pdf_path = resolve(root, lab.get("pdf", lab_dir / ("Отчет_ЛР%d.pdf" % lab_number)))
+    text_path = resolve(root, lab.get("text", lab_dir / "text.docx"))
+    record_path = lab_dir / "quality_gate.json"
+    required_file(None, record_path, "quality gate record")
+    try:
+        with record_path.open(encoding="utf-8-sig") as stream:
+            record = json.load(stream)
+    except json.JSONDecodeError as exc:
+        fail("quality gate record has invalid JSON: %s" % exc)
+    actual = record.get("sha256") if isinstance(record, dict) else None
+    expected = quality_hashes(root, lab_number, lab, report_path, pdf_path, text_path)
+    if not isinstance(actual, dict):
+        fail("quality gate record has no SHA-256 manifest; run quality-gate again")
+    if actual != expected:
+        fail("quality gate record is stale; tracked files changed after the last quality-gate")
+    print("QUALITY RECORD CURRENT: lab %d" % lab_number)
 
 def quality_gate(root, lab_number, lab):
     """Check report inputs and mandatory documents; then record a successful gate."""
@@ -355,7 +396,7 @@ def main():
     parser.add_argument("--root", default=".", help="корень проекта; по умолчанию текущий каталог")
     parser.add_argument("--lab", type=int, required=True, help="номер ЛР")
     parser.add_argument("--action", required=True,
-                        choices=("validate-state", "build-report", "verify-report", "quality-gate"))
+                        choices=("validate-state", "build-report", "verify-report", "quality-gate", "verify-quality"))
     args = parser.parse_args()
     root = Path(args.root).resolve()
     state = load_state(root)
@@ -366,6 +407,8 @@ def main():
         build_report(root, args.lab, lab)
     elif args.action == "verify-report":
         verify_report(root, args.lab, lab)
+    elif args.action == "verify-quality":
+        verify_quality_record(root, args.lab, lab)
     else:
         quality_gate(root, args.lab, lab)
 

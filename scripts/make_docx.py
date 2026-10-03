@@ -251,7 +251,21 @@ SECT_PR = ('<w:sectPr><w:footerReference w:type="default" r:id="rId2"/>'
            'w:bottom="1134" w:left="1701" w:header="708" w:footer="708" w:gutter="0"/>'
            '<w:titlePg/></w:sectPr>')
 
+def validate_content(content, num, theme, title):
+    """Validate report content and prevent a duplicate automatic report header."""
+    if not isinstance(content, list):
+        raise ValueError("content must be a JSON list")
+    if not all(isinstance(item, dict) for item in content):
+        raise ValueError("each content item must be a JSON object")
+    if not title or len(content) < 2:
+        return
+    automatic_title = "Лабораторная работа №%d" % num
+    automatic_theme = "по теме «%s»" % theme
+    if content[0].get("h") == automatic_title and content[1].get("h") in (theme, automatic_theme):
+        raise ValueError("content starts with a duplicate automatic report header; start with a substantive section")
+
 def build(out, num, theme, content, workdir, ctx=None, title=True):
+    validate_content(content, num, theme, title)
     def resolve(p):
         return os.path.normpath(os.path.join(workdir, p))
     paras = []
