@@ -256,11 +256,31 @@ def verify_content_references(content_path):
         fail("не найдены ссылки из content: %s" % "; ".join(missing))
 
 
+def verify_execution_evidence(content_path):
+    """Require a real PNG after a result section when code is reported."""
+    with content_path.open(encoding="utf-8-sig") as stream:
+        content = json.load(stream)
+    has_code = any(isinstance(item, dict) and "codefile" in item for item in content)
+    result_positions = [index for index, item in enumerate(content)
+                        if isinstance(item, dict) and item.get("h", "").casefold() == "результат выполнения"]
+    if not has_code or not result_positions:
+        return
+    for index in result_positions:
+        following = content[index + 1] if index + 1 < len(content) else None
+        if not isinstance(following, dict) or "img" not in following:
+            fail("раздел «Результат выполнения» должен сразу содержать img с фактическим PNG запуска")
+        image = content_path.parent / following["img"]
+        if image.suffix.casefold() != ".png" or image.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n":
+            fail("доказательство выполнения должно быть корректным PNG: %s" % image)
+        print("EXECUTION EVIDENCE %s" % image)
+
+
 def verify_report(root, lab_number, lab):
     content_path, report_path, _ = paths_for(root, lab_number, lab)
     if not content_path.is_file():
         fail("не найден content: %s" % content_path)
     verify_content_references(content_path)
+    verify_execution_evidence(content_path)
     artifacts = lab.get("artifacts", [str(report_path.relative_to(root))])
     if not isinstance(artifacts, list) or not artifacts:
         fail("labs.%d.artifacts должен быть непустым списком; добавляйте артефакты по мере создания" % lab_number)
