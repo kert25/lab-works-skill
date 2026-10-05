@@ -10,6 +10,8 @@ Usage:
     py lab_runner.py --root <project-root> --lab N --action prepare-report
     py lab_runner.py --root <project-root> --lab N --action verify-report
     py lab_runner.py --root <project-root> --lab N --action quality-gate
+    py lab_runner.py --root <project-root> --lab N --action check-screenshot
+    py lab_runner.py --root <project-root> --lab N --action capture-cli
 
 Theme names and Cyrillic paths are read from UTF-8 JSON instead of shell
 arguments. The selected lab record must contain `theme`; report content and
@@ -22,9 +24,11 @@ import os
 import posixpath
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
+import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +45,7 @@ BUNDLED_TOOLS = {
     "cdp": "cdp.js",
     "shot": "shot.ps1",
     "docx_text": "docx_text.py",
+    "run_cli_shot": "run_cli_shot.ps1",
 }
 CHECK_NAMES = ("content_references", "artifacts", "report_docx", "report_pdf", "text_docx")
 WINDOWS_ABSOLUTE = re.compile(r"^[A-Za-z]:[\\/]")
@@ -228,6 +233,34 @@ def validate_state(root, lab_number, state, lab):
     print("STATE VALID: lab %d" % lab_number)
 
 
+def atomic_build_docx(output_path, *build_args, **build_kwargs):
+    """Build DOCX beside its destination, then atomically replace it.
+
+    An opened DOCX must never truncate the previous report.  If Windows locks
+    the destination, the completed temporary document is retained for recovery.
+    """
+    output_path = Path(output_path)
+    temporary = output_path.with_name(
+        ".%s.new-%s.docx" % (output_path.stem, uuid.uuid4().hex)
+    )
+    try:
+        build(str(temporary), *build_args, **build_kwargs)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+    try:
+        os.replace(temporary, output_path)
+    except PermissionError as exc:
+        raise SystemExit(
+            "не удалось заменить DOCX, вероятно он открыт в Word или другом просмотрщике: %s\n"
+            "Закройте документ и повторите команду. Новая собранная копия сохранена: %s" %
+            (output_path, temporary)
+        ) from exc
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
 def build_report(root, lab_number, lab):
     methodical_guide = lab.get("methodical_guide")
     if methodical_guide is not None:
@@ -244,8 +277,10 @@ def build_report(root, lab_number, lab):
     if not isinstance(content, list):
         fail("content должен быть JSON-списком: %s" % content_path)
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    build(str(report_path), report_number_for(lab_number, lab), lab["theme"], content,
-          str(content_path.parent), load_context(str(context_path)))
+    atomic_build_docx(
+        report_path, report_number_for(lab_number, lab), lab["theme"], content,
+        str(content_path.parent), load_context(str(context_path)),
+    )
     print("REPORT %s" % report_path)
 
 
@@ -262,8 +297,10 @@ def build_text(root, lab_number, lab):
     if not isinstance(content, list):
         fail("content_text должен быть JSON-списком: %s" % content_path)
     text_path.parent.mkdir(parents=True, exist_ok=True)
-    build(str(text_path), report_number_for(lab_number, lab), lab["theme"], content,
-          str(content_path.parent), None, title=False)
+    atomic_build_docx(
+        text_path, report_number_for(lab_number, lab), lab["theme"], content,
+        str(content_path.parent), None, title=False,
+    )
     print("TEXT %s" % text_path)
 
 
@@ -356,23 +393,93 @@ def verify_content_references(content_path):
         fail("не найдены ссылки из content: %s" % "; ".join(missing))
 
 
-def verify_execution_evidence(content_path):
-    """Require a real PNG after a result section when code is reported."""
+def png_dimensions(path):
+    """Return PNG dimensions using only the mandatory IHDR chunk."""
+    path = Path(path)
+    with path.open("rb") as stream:
+        header = stream.read(24)
+    if header[:8] != b"\x89PNG\r\n\x1a\n" or header[12:16] != b"IHDR":
+        fail("доказательство выполнения должно быть корректным PNG: %s" % path)
+    return struct.unpack(">II", header[16:24])
+
+
+def check_screenshot(path):
+    """Perform a non-interactive, technical validation of report evidence."""
+    width, height = png_dimensions(path)
+    if width < 640 or height < 360:
+        fail("PNG-доказательство слишком мало (%dx%d, минимум 640x360): %s" %
+             (width, height, path))
+    print("SCREENSHOT OK %s (%dx%d)" % (path, width, height))
+
+
+def execution_evidence_images(content_path):
+    """Return required evidence images, or no images when the report has no code."""
     with content_path.open(encoding="utf-8-sig") as stream:
         content = json.load(stream)
     has_code = any(isinstance(item, dict) and "codefile" in item for item in content)
     result_positions = [index for index, item in enumerate(content)
                         if isinstance(item, dict) and item.get("h", "").casefold() == "результат выполнения"]
     if not has_code or not result_positions:
-        return
+        return []
+    images = []
     for index in result_positions:
         following = content[index + 1] if index + 1 < len(content) else None
         if not isinstance(following, dict) or "img" not in following:
             fail("раздел «Результат выполнения» должен сразу содержать img с фактическим PNG запуска")
-        image = content_path.parent / following["img"]
-        if image.suffix.casefold() != ".png" or image.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n":
-            fail("доказательство выполнения должно быть корректным PNG: %s" % image)
+        images.append(content_path.parent / following["img"])
+    return images
+
+
+def verify_execution_evidence(content_path):
+    """Require a readable, sufficiently large PNG after a result section when code is reported."""
+    for image in execution_evidence_images(content_path):
+        if image.suffix.casefold() != ".png":
+            fail("доказательство выполнения должно быть PNG: %s" % image)
+        check_screenshot(image)
         print("EXECUTION EVIDENCE %s" % image)
+
+
+def check_report_screenshots(root, lab_number, lab):
+    """Validate evidence PNGs without opening windows or stealing focus."""
+    content_path, _, _ = paths_for(root, lab_number, lab)
+    if not content_path.is_file():
+        fail("не найден content: %s" % content_path)
+    images = execution_evidence_images(content_path)
+    if not images:
+        print("SCREENSHOT CHECK: no executable evidence required")
+        return
+    for image in images:
+        if image.suffix.casefold() != ".png":
+            fail("доказательство выполнения должно быть PNG: %s" % image)
+        check_screenshot(image)
+
+
+def capture_cli_evidence(root, lab_number, lab):
+    """Capture CLI evidence through the bundled isolated-console launcher."""
+    commands = lab.get("commands")
+    if not isinstance(commands, dict) or not isinstance(commands.get("cli_evidence"), str):
+        fail("для capture-cli укажите labs.%d.commands.cli_evidence" % lab_number)
+    content_path, _, _ = paths_for(root, lab_number, lab)
+    images = execution_evidence_images(content_path)
+    if len(images) != 1:
+        fail("capture-cli требует ровно один img сразу после «Результат выполнения»")
+    image = images[0]
+    if image.suffix.casefold() != ".png":
+        fail("img доказательства должен быть PNG: %s" % image)
+    image.parent.mkdir(parents=True, exist_ok=True)
+    environment = os.environ.copy()
+    environment["LAB_CLI_COMMAND"] = commands["cli_evidence"]
+    environment["LAB_CLI_OUT"] = str(image)
+    launcher = Path(__file__).resolve().parent / "run_cli_shot.ps1"
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(launcher)],
+            cwd=root, env=environment, check=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise SystemExit("не удалось снять CLI-доказательство: %s" % error)
+    check_screenshot(image)
+    print("CLI EVIDENCE %s" % image)
 
 
 def verify_report(root, lab_number, lab):
@@ -520,6 +627,7 @@ def main():
         choices=(
             "validate-state", "build-report", "build-text", "build-pdf", "inspect-documents",
             "prepare-report", "verify-report", "quality-gate", "verify-quality",
+            "check-screenshot", "capture-cli",
         ),
     )
     args = parser.parse_args()
@@ -542,6 +650,10 @@ def main():
         verify_report(root, args.lab, lab)
     elif args.action == "verify-quality":
         verify_quality_record(root, args.lab, lab)
+    elif args.action == "check-screenshot":
+        check_report_screenshots(root, args.lab, lab)
+    elif args.action == "capture-cli":
+        capture_cli_evidence(root, args.lab, lab)
     else:
         quality_gate(root, args.lab, lab)
 

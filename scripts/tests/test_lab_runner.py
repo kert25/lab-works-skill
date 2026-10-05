@@ -64,20 +64,24 @@ class RunnerBuildTest(unittest.TestCase):
         }
         with patch.object(lab_runner, "build") as build, patch.object(
             lab_runner, "load_context", return_value={}
-        ):
+        ), patch.object(lab_runner.os, "replace"):
             lab_runner.build_report(self.root, 1, lab)
 
         report = self.root / "ЛР1" / "Отчет_ЛР1.docx"
-        self.assertEqual(build.call_args.args[0], str(report))
+        temporary = Path(build.call_args.args[0])
+        self.assertEqual(temporary.parent, report.parent)
+        self.assertEqual(temporary.suffix, ".docx")
         self.assertEqual(build.call_args.args[1], 9)
 
     def test_build_text_uses_state_paths_without_title_page(self):
         lab = {"theme": "Topic"}
         (self.root / "ЛР1" / "content_text.json").write_text("[]", encoding="utf-8")
-        with patch.object(lab_runner, "build") as build:
+        with patch.object(lab_runner, "build") as build, patch.object(lab_runner.os, "replace"):
             lab_runner.build_text(self.root, 1, lab)
 
-        self.assertEqual(build.call_args.args[0], str(self.root / "ЛР1" / "text.docx"))
+        temporary = Path(build.call_args.args[0])
+        self.assertEqual(temporary.parent, self.root / "ЛР1")
+        self.assertEqual(temporary.suffix, ".docx")
         self.assertIsNone(build.call_args.args[5])
         self.assertFalse(build.call_args.kwargs["title"])
 
@@ -95,7 +99,7 @@ class RunnerBuildTest(unittest.TestCase):
         lab = {"theme": "Topic"}
         with patch.object(lab_runner, "build") as build, patch.object(
             lab_runner, "load_context", return_value={}
-        ):
+        ), patch.object(lab_runner.os, "replace"):
             lab_runner.build_report(self.root, 1, lab)
         self.assertEqual(build.call_args.args[1], 1)
 
@@ -105,6 +109,12 @@ class RunnerBuildTest(unittest.TestCase):
         lab_runner.verify_report(
             self.root, 1, {"artifacts": ["ЛР1/screenshots"]}
         )
+
+    def test_check_screenshot_rejects_too_small_png(self):
+        image = self.root / "small.png"
+        image.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR" + (100).to_bytes(4, "big") + (100).to_bytes(4, "big"))
+        with self.assertRaisesRegex(SystemExit, "слишком мало"):
+            lab_runner.check_screenshot(image)
 
     def test_verify_report_checks_code_and_image_references(self):
         lab_dir = self.root / "ЛР1"
