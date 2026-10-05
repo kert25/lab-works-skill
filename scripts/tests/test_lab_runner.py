@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -9,6 +10,7 @@ from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
+import docx_text  # noqa: E402
 import lab_runner  # noqa: E402
 
 
@@ -69,6 +71,16 @@ class RunnerBuildTest(unittest.TestCase):
         self.assertEqual(build.call_args.args[0], str(report))
         self.assertEqual(build.call_args.args[1], 9)
 
+    def test_build_text_uses_state_paths_without_title_page(self):
+        lab = {"theme": "Topic"}
+        (self.root / "ЛР1" / "content_text.json").write_text("[]", encoding="utf-8")
+        with patch.object(lab_runner, "build") as build:
+            lab_runner.build_text(self.root, 1, lab)
+
+        self.assertEqual(build.call_args.args[0], str(self.root / "ЛР1" / "text.docx"))
+        self.assertIsNone(build.call_args.args[5])
+        self.assertFalse(build.call_args.kwargs["title"])
+
     def test_missing_methodical_guide_stops_before_build(self):
         lab = {
             "methodical_guide": "ЛР1/missing.pdf",
@@ -111,6 +123,22 @@ class RunnerBuildTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(SystemExit, "ссылки из content"):
             lab_runner.verify_report(self.root, 1, {"artifacts": ["ЛР1"]})
+
+    def test_build_pdf_uses_libreoffice_when_word_fails(self):
+        report = self.root / "ЛР1" / "Отчет_ЛР1.docx"
+        report.write_bytes(b"docx")
+        pdf = self.root / "ЛР1" / "Отчет_ЛР1.pdf"
+
+        def run(command, **_):
+            if command[0] == "powershell":
+                raise subprocess.CalledProcessError(1, command)
+            pdf.write_bytes(b"%PDF-1.7\n")
+
+        with patch.object(lab_runner.subprocess, "run", side_effect=run), patch.object(
+            lab_runner.shutil, "which", return_value="soffice"
+        ):
+            lab_runner.build_pdf(self.root, 1, {})
+        self.assertEqual(pdf.read_bytes()[:4], b"%PDF")
 
     def test_quality_gate_checks_report_pdf_and_cheat_sheet(self):
         lab_dir = self.root / "ЛР1"
@@ -216,7 +244,7 @@ class RunnerQualityRecordTest(unittest.TestCase):
     def test_quality_gate_writes_portable_record(self):
         lab_runner.quality_gate(self.root, 1, self.lab)
         record = json.loads((self.lab_dir / "quality_gate.json").read_text(encoding="utf-8"))
-        self.assertEqual(record["schema_version"], 1)
+        self.assertEqual(record["schema_version"], 2)
         self.assertEqual(record["status"], "passed")
         self.assertTrue(record["checked_at"].endswith("Z"))
         self.assertEqual(record["files"], ["ЛР1/Отчет_ЛР1.docx", "ЛР1/Отчет_ЛР1.pdf", "ЛР1/text.docx"])
@@ -228,6 +256,20 @@ class RunnerQualityRecordTest(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "сигнатуры"):
             lab_runner.quality_gate(self.root, 1, self.lab)
         self.assertEqual(record_path.read_text(encoding="utf-8"), '{"status": "previous"}\n')
+
+
+class DocxTextTest(unittest.TestCase):
+    def test_extract_docx_text_returns_visible_paragraphs(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            path = Path(tempdir) / "guide.docx"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr(
+                    "word/document.xml",
+                    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                    '<w:body><w:p><w:r><w:t>First</w:t></w:r></w:p>'
+                    '<w:p><w:r><w:t>Second</w:t></w:r></w:p></w:body></w:document>',
+                )
+            self.assertEqual(docx_text.extract_docx_text(path), "First\nSecond")
 
 
 if __name__ == "__main__":

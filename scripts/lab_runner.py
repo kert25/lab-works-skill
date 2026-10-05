@@ -4,6 +4,10 @@
 Usage:
     py lab_runner.py --root <project-root> --lab N --action validate-state
     py lab_runner.py --root <project-root> --lab N --action build-report
+    py lab_runner.py --root <project-root> --lab N --action build-text
+    py lab_runner.py --root <project-root> --lab N --action build-pdf
+    py lab_runner.py --root <project-root> --lab N --action inspect-documents
+    py lab_runner.py --root <project-root> --lab N --action prepare-report
     py lab_runner.py --root <project-root> --lab N --action verify-report
     py lab_runner.py --root <project-root> --lab N --action quality-gate
 
@@ -17,6 +21,8 @@ import json
 import os
 import posixpath
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -34,6 +40,7 @@ BUNDLED_TOOLS = {
     "docx2pdf": "docx2pdf.ps1",
     "cdp": "cdp.js",
     "shot": "shot.ps1",
+    "docx_text": "docx_text.py",
 }
 CHECK_NAMES = ("content_references", "artifacts", "report_docx", "report_pdf", "text_docx")
 WINDOWS_ABSOLUTE = re.compile(r"^[A-Za-z]:[\\/]")
@@ -123,6 +130,20 @@ def paths_for(root, lab_number, lab):
     )
 
 
+def text_paths_for(root, lab_number, lab):
+    """Return the input JSON and output DOCX paths for defence notes."""
+    lab_dir = lab_directory(root, lab_number, lab)
+    return (
+        resolve(root, lab.get("text_content", lab_dir / "content_text.json")),
+        resolve(root, lab.get("text", lab_dir / "text.docx")),
+    )
+
+
+def pdf_path_for(root, lab_number, lab):
+    lab_dir = lab_directory(root, lab_number, lab)
+    return resolve(root, lab.get("pdf", lab_dir / ("Отчет_ЛР%d.pdf" % lab_number)))
+
+
 def validate_string_map(value, field, lab_number, require_portable_commands=False):
     if not isinstance(value, dict):
         fail("labs.%d.%s должен быть объектом" % (lab_number, field))
@@ -168,7 +189,7 @@ def validate_verification(value, lab_number):
 def validate_lab_state(root, lab_number, lab):
     """Validate portable state metadata without requiring report outputs."""
     get_lab({"labs": {str(lab_number): lab}}, lab_number)
-    for field in ("directory", "methodical_guide", "content", "report", "context", "pdf", "text"):
+    for field in ("directory", "methodical_guide", "content", "report", "context", "pdf", "text", "text_content"):
         if field in lab and normalized_relative_path(lab[field]) is None:
             fail("labs.%d.%s должен быть относительным путём" % (lab_number, field))
     artifacts = lab.get("artifacts")
@@ -226,6 +247,85 @@ def build_report(root, lab_number, lab):
     build(str(report_path), report_number_for(lab_number, lab), lab["theme"], content,
           str(content_path.parent), load_context(str(context_path)))
     print("REPORT %s" % report_path)
+
+
+def build_text(root, lab_number, lab):
+    """Build text.docx from content_text.json without a title page."""
+    content_path, text_path = text_paths_for(root, lab_number, lab)
+    if not content_path.is_file():
+        fail("не найден content_text: %s" % content_path)
+    try:
+        with content_path.open(encoding="utf-8-sig") as stream:
+            content = json.load(stream)
+    except json.JSONDecodeError as exc:
+        fail("некорректный JSON в content_text: %s" % exc)
+    if not isinstance(content, list):
+        fail("content_text должен быть JSON-списком: %s" % content_path)
+    text_path.parent.mkdir(parents=True, exist_ok=True)
+    build(str(text_path), report_number_for(lab_number, lab), lab["theme"], content,
+          str(content_path.parent), None, title=False)
+    print("TEXT %s" % text_path)
+
+
+def build_pdf(root, lab_number, lab):
+    """Convert the report to PDF through Word COM or a LibreOffice fallback."""
+    _, report_path, _ = paths_for(root, lab_number, lab)
+    pdf_path = pdf_path_for(root, lab_number, lab)
+    required_file(None, report_path, "DOCX-отчёт")
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    scripts_dir = Path(__file__).resolve().parent
+    word_command = [
+        "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+        str(scripts_dir / "docx2pdf.ps1"), "-Docx", str(report_path), "-Pdf", str(pdf_path),
+    ]
+    try:
+        subprocess.run(word_command, cwd=root, check=True)
+    except (OSError, subprocess.CalledProcessError) as word_error:
+        soffice = shutil.which("soffice") or shutil.which("soffice.exe")
+        if not soffice:
+            raise SystemExit(
+                "не удалось преобразовать DOCX в PDF через Word COM (%s); "
+                "Word и LibreOffice недоступны" % word_error
+            )
+        try:
+            subprocess.run(
+                [soffice, "--headless", "--convert-to", "pdf", "--outdir", str(pdf_path.parent), str(report_path)],
+                cwd=root, check=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as libre_error:
+            raise SystemExit("не удалось преобразовать DOCX в PDF через LibreOffice: %s" % libre_error)
+        generated = pdf_path.parent / (report_path.stem + ".pdf")
+        if generated != pdf_path and generated.is_file():
+            os.replace(generated, pdf_path)
+    verify_pdf(pdf_path)
+
+
+def inspect_documents(root, lab_number, lab):
+    """Inspect report/notes DOCX structure and print extracted report PDF text."""
+    _, report_path, _ = paths_for(root, lab_number, lab)
+    _, text_path = text_paths_for(root, lab_number, lab)
+    pdf_path = pdf_path_for(root, lab_number, lab)
+    scripts_dir = Path(__file__).resolve().parent
+    for script, path, extra in (
+        ("inspect_docx.py", report_path, ["--summary"]),
+        ("inspect_docx.py", text_path, ["--summary"]),
+        ("pdf_text.py", pdf_path, []),
+    ):
+        print("--- %s: %s ---" % (script, path.name))
+        try:
+            subprocess.run([sys.executable, str(scripts_dir / script), str(path), *extra], cwd=root, check=True)
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise SystemExit("не удалось выполнить %s для %s: %s" % (script, path, error))
+
+
+def prepare_report(root, lab_number, lab):
+    """Run the complete reproducible build, inspection and quality-gate cycle."""
+    build_report(root, lab_number, lab)
+    build_text(root, lab_number, lab)
+    build_pdf(root, lab_number, lab)
+    verify_report(root, lab_number, lab)
+    inspect_documents(root, lab_number, lab)
+    quality_gate(root, lab_number, lab)
 
 
 def verify_content_references(content_path):
@@ -344,7 +444,8 @@ def quality_hashes(root, lab_number, lab, report_path, pdf_path, text_path):
         path = root / normalized_relative_path(artifact)
         if path != quality_path and path.is_file():
             candidates.append(path)
-    return {relative_to_root(root, path): sha256_file(path) for path in sorted(set(candidates))}
+    existing = [path for path in set(candidates) if path.is_file()]
+    return {relative_to_root(root, path): sha256_file(path) for path in sorted(existing)}
 
 def write_quality_record(root, lab_number, lab, report_path, pdf_path, text_path):
     lab_dir = lab_directory(root, lab_number, lab)
@@ -380,8 +481,8 @@ def verify_quality_record(root, lab_number, lab):
     """Verify that a quality record exists and still matches all tracked files."""
     _, report_path, _ = paths_for(root, lab_number, lab)
     lab_dir = lab_directory(root, lab_number, lab)
-    pdf_path = resolve(root, lab.get("pdf", lab_dir / ("Отчет_ЛР%d.pdf" % lab_number)))
-    text_path = resolve(root, lab.get("text", lab_dir / "text.docx"))
+    pdf_path = pdf_path_for(root, lab_number, lab)
+    _, text_path = text_paths_for(root, lab_number, lab)
     record_path = lab_dir / "quality_gate.json"
     required_file(None, record_path, "quality gate record")
     try:
@@ -401,9 +502,8 @@ def quality_gate(root, lab_number, lab):
     """Check report inputs and mandatory documents; then record a successful gate."""
     verify_report(root, lab_number, lab)
     _, report_path, _ = paths_for(root, lab_number, lab)
-    lab_dir = lab_directory(root, lab_number, lab)
-    pdf_path = resolve(root, lab.get("pdf", lab_dir / ("Отчет_ЛР%d.pdf" % lab_number)))
-    text_path = resolve(root, lab.get("text", lab_dir / "text.docx"))
+    pdf_path = pdf_path_for(root, lab_number, lab)
+    _, text_path = text_paths_for(root, lab_number, lab)
     verify_docx(report_path, "DOCX-отчёт")
     verify_pdf(pdf_path)
     verify_docx(text_path, "конспект text.docx")
@@ -415,8 +515,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=".", help="корень проекта; по умолчанию текущий каталог")
     parser.add_argument("--lab", type=int, required=True, help="номер ЛР")
-    parser.add_argument("--action", required=True,
-                        choices=("validate-state", "build-report", "verify-report", "quality-gate", "verify-quality"))
+    parser.add_argument(
+        "--action", required=True,
+        choices=(
+            "validate-state", "build-report", "build-text", "build-pdf", "inspect-documents",
+            "prepare-report", "verify-report", "quality-gate", "verify-quality",
+        ),
+    )
     args = parser.parse_args()
     root = Path(args.root).resolve()
     state = load_state(root)
@@ -425,6 +530,14 @@ def main():
         validate_state(root, args.lab, state, lab)
     elif args.action == "build-report":
         build_report(root, args.lab, lab)
+    elif args.action == "build-text":
+        build_text(root, args.lab, lab)
+    elif args.action == "build-pdf":
+        build_pdf(root, args.lab, lab)
+    elif args.action == "inspect-documents":
+        inspect_documents(root, args.lab, lab)
+    elif args.action == "prepare-report":
+        prepare_report(root, args.lab, lab)
     elif args.action == "verify-report":
         verify_report(root, args.lab, lab)
     elif args.action == "verify-quality":

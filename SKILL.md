@@ -15,7 +15,7 @@ description: "Use this skill whenever the user asks to complete, format, or prep
 
 Для каждой ЛР с исполнимым исходным кодом раздел «Результат выполнения» обязан содержать PNG фактического запуска. Текстовый `code` с ожидаемым выводом не заменяет доказательство и может быть только пояснением рядом с изображением. CLI снимается из настоящего окна терминала, веб-работа — из реальной страницы, нативный интерфейс — из работающего окна.
 
-При активном workflow этого skill сначала используй bundled-инструменты из `scripts/`: `shot.ps1` для нативных окон терминала/GUI, `cdp.js` для браузерных страниц, `lab_runner.py` для проверок. Глобальный skill `screenshot` — fallback, когда требуется OCR либо работа с активным пользовательским окном; он не заменяет `shot.ps1` для отчётного доказательства.
+При активном workflow этого skill сначала используй bundled-инструменты из `scripts/`: `shot.ps1` для нативных окон терминала/GUI, `cdp.js` для браузерных страниц, `lab_runner.py` для сборки и проверок, `docx_text.py` для извлечения текста из DOCX. Глобальный skill `screenshot` — fallback, когда требуется OCR либо работа с активным пользовательским окном; он не заменяет `shot.ps1` для отчётного доказательства.
 
 ## Главные принципы
 
@@ -140,8 +140,8 @@ description: "Use this skill whenever the user asks to complete, format, or prep
 Для схем, сокращений и команд с подстановками используй отдельный необязательный
 объект `command_templates`. `tooling` — необязательный объект с логическими
 ссылками на общие скрипты вида `bundled:inspect_docx`, `bundled:pdf_text`,
-`bundled:docx2pdf`, `bundled:cdp`, `bundled:shot` или `bundled:lab_runner`; runner разрешает их
-относительно собственного каталога. `verification` — необязательная сводка
+`bundled:docx2pdf`, `bundled:docx_text`, `bundled:cdp`, `bundled:shot` или
+`bundled:lab_runner`; runner разрешает их относительно собственного каталога. `verification` — необязательная сводка
 последней проверки (`status`, UTC-время `checked_at`, списки `checks` и
 `warnings`); она не заменяет повторный quality gate. Создавай записи только для
 известных лабораторных. Допустимые `status`:
@@ -173,9 +173,10 @@ description: "Use this skill whenever the user asks to complete, format, or prep
 | `docx2pdf.ps1` | docx → pdf (Word COM) | из папки скилла |
 | `cdp.js` | CDP-управление Edge: снимки страниц, JS, диалоги, popup; `reset` очищает зависший профиль | из папки скилла |
 | `shot.ps1` | снимок окна/региона ОС | рядом с `cdp.js` (харнес зовёт сам) |
-| `pdf_text.py` | текст из PDF-методичек (pymupdf) | из папки скилла |
-| `inspect_docx.py` | дамп абзацев и таблиц docx (проверка собранного отчёта) | из папки скилла |
-| `lab_runner.py` | ASCII-safe сборка и проверка по `_lab_state.json` | из папки скилла |
+| `pdf_text.py` | извлечение текста из PDF (pymupdf) | из папки скилла |
+| `docx_text.py` | извлечение текста из DOCX для содержательной проверки | из папки скилла |
+| `inspect_docx.py` | структурная проверка абзацев, таблиц, листингов и рисунков DOCX | из папки скилла |
+| `lab_runner.py` | ASCII-safe сборка, конвертация и проверка по `_lab_state.json` | из папки скилла |
 
 Дублируется в `_tools/` только `make_docx.py` — он единственный, кто
 адаптируется под проект/вуз. Остальные запускай напрямую из папки скилла,
@@ -229,7 +230,9 @@ _lab_state.json       — ход лабораторных, команды и г�
 
 1. Уточни номер лабораторной работы. Задание ищи в методичке пользователя:
    PDF читай сначала read-инструментом, а если он PDF не берёт — извлеки
-   текст: `py <папка скилла>\scripts\pdf_text.py методичка.pdf [1-5]`.
+   текст: `py C:\tools\lab-skill\scripts\pdf_text.py guide.pdf 1-5`.
+   В примере используются только ASCII-пути; при кириллическом пути запускай
+   runner из корня проекта вместо передачи пути через shell.
    Диапазон 1-based включительный; выход за последнюю страницу ограничивается с
    предупреждением, а некорректный диапазон завершает команду понятной ошибкой.
    (нужен pymupdf: `pip install pymupdf`). Путь спроси, если не очевиден.
@@ -245,10 +248,14 @@ _lab_state.json       — ход лабораторных, команды и г�
    по смыслу страницы/состояния (`index.png`, `dialog_prompt.png`).
    «Чистые» ОС-скриншоты (не связаны со страницей) — через скилл screenshot.
 4. Собери отчёт (раздел «Отчёт») → `ЛРN/Отчет_ЛРN.docx`.
-5. Конвертируй в PDF (раздел «PDF») → `ЛРN/Отчет_ЛРN.pdf`.
-6. Собери `ЛРN/text.docx` (раздел «Конспект для защиты»).
-7. Пройди quality gate из раздела «Проверка отчёта», сохрани команды и
-   подтверждённые файлы в `_lab_state.json`, затем поставь `ready_for_review`.
+5. Собери `ЛРN/text.docx` (раздел «Конспект для защиты»); предпочтительно
+   runner-действием `build-text`.
+6. Конвертируй отчёт в PDF (раздел «PDF») → `ЛРN/Отчет_ЛРN.pdf`;
+   предпочтительно runner-действием `build-pdf`.
+7. Выполни `inspect-documents`, затем quality gate из раздела «Проверка
+   отчёта», сохрани команды и подтверждённые файлы в `_lab_state.json`, затем
+   поставь `ready_for_review`. `prepare-report` может выполнить полный цикл
+   сборки, инспекции и quality gate одним действием.
 8. Отчитайся пользователю: что сделано, где лежит, что проверить. Жди
    проверки, вноси правки до согласования; после согласования поставь
    `completed`.
@@ -259,8 +266,12 @@ _lab_state.json       — ход лабораторных, команды и г�
 
 ## Отчёт (make_docx.py)
 
-```
-py _tools\make_docx.py --out ЛРN\Отчет_ЛРN.docx --num N --theme "Тема" --content ЛРN\content.json --context _context.json
+Для путей или темы с не-ASCII символами предпочитай runner-действие
+`build-report`, которое читает их из состояния. Ручной запуск допустим только
+с уже ASCII-safe аргументами:
+
+```text
+py _tools\make_docx.py --out lab\report.docx --num 1 --theme "Sample theme" --content lab\content.json --context _context.json
 ```
 
 Содержимое отчёта — `ЛРN/content.json`, список элементов:
@@ -298,9 +309,11 @@ content.json, порядок секций = порядок заданий в м�
 Относительные пути внутри content.json — от папки самого content.json.
 Титульный лист, колонтитул с номером страницы (скрыт на титуле), поля A4 и шапку второй страницы («Лабораторная работа №N» и «по теме …») скрипт делает сам по `--num`, `--theme` и данным из `_context.json`. Поэтому при обычной сборке не добавляй эти два заголовка первыми элементами `content.json`: начинай с содержательного раздела («Цель работы», «Задание», «Ход работы»). Сборщик диагностирует точный дубль до создания DOCX. Полное описание формата — в докстринге `_tools/make_docx.py`.
 
-Для проверки сначала используй bundled-инспектор из папки скилла:
-`py <папка скилла>\scripts\inspect_docx.py <файл.docx> --summary`. Если
-bundled-инспектор недоступен, используй проектный `_tools/inspect_docx.py`.
+Для ручной структурной проверки используй bundled-инспектор с ASCII-safe
+путём: `py C:\tools\lab-skill\scripts\inspect_docx.py C:\work\report.docx --summary`.
+Если bundled-инспектор недоступен, используй проектный `_tools/inspect_docx.py`.
+Для проверки итоговой пары документов предпочитай runner-действие
+`inspect-documents`.
 Если выбранный инспектор не поддерживает `--summary`, запусти его без флага;
 это не является ошибкой отчёта. Полный вывод содержит проверку структуры
 абзацев, таблиц, листингов и рисунков.
@@ -316,38 +329,60 @@ bundled-инспектор недоступен, используй проект
 аргументы PowerShell 5.1; логи и временные файлы называй ASCII. При сохранении
 вывода Python в файл на Windows устанавливай `PYTHONUTF8=1`.
 
-Для стандартного отчёта можно использовать bundled runner, который читает
-тему и пути из `_lab_state.json`, поэтому тема не передаётся через shell. Если
-корень содержит кириллицу, запускай команду **из корня проекта** и передавай
-только ASCII `.` вместо пути:
+Для стандартной сборки используй bundled runner: он читает тему и пути из
+`_lab_state.json`, поэтому тема не передаётся через shell. Runner-действия
+`build-text`, `build-pdf`, `inspect-documents` и `prepare-report` также не
+передают через shell пути, тему или иные пользовательские значения из состояния.
+Это намеренно исключает передачу кириллических путей и тем в оболочку.
 
-```
-py <папка скилла>\scripts\lab_runner.py --root . --lab N --action validate-state
-py <папка скилла>\scripts\lab_runner.py --root . --lab N --action build-report
-py <папка скилла>\scripts\lab_runner.py --root . --lab N --action verify-report
-py <папка скилла>\scripts\lab_runner.py --root . --lab N --action quality-gate
-py <папка скилла>\scripts\lab_runner.py --root . --lab N --action verify-quality
+Если корень содержит кириллицу, запускай команды **из корня проекта** и
+передавай только ASCII `.` и ASCII-путь к каталогу скилла (здесь
+`C:\tools\lab-skill` — пример такого пути):
+
+```text
+py C:\tools\lab-skill\scripts\lab_runner.py --root . --lab 1 --action validate-state
+py C:\tools\lab-skill\scripts\lab_runner.py --root . --lab 1 --action build-report
+py C:\tools\lab-skill\scripts\lab_runner.py --root . --lab 1 --action build-text
+py C:\tools\lab-skill\scripts\lab_runner.py --root . --lab 1 --action build-pdf
+py C:\tools\lab-skill\scripts\lab_runner.py --root . --lab 1 --action inspect-documents
+py C:\tools\lab-skill\scripts\lab_runner.py --root . --lab 1 --action quality-gate
+py C:\tools\lab-skill\scripts\lab_runner.py --root . --lab 1 --action verify-quality
+py C:\tools\lab-skill\scripts\lab_runner.py --root . --lab 1 --action prepare-report
 ```
 
 `--root` по умолчанию равен `.`; абсолютный путь передавай лишь если он уже
-ASCII-safe.
-
-В выбранной записи `labs.N` обязательна непустая `theme`; `content`, `report`
-и `context` необязательны и по умолчанию используют стандартные пути.
-`--lab N` выбирает запись состояния, а не обязательно официальный номер:
-для титульника runner берёт `report_number`, если оно задано. `directory`
+ASCII-safe. В выбранной записи `labs.N` обязательна непустая `theme`; `content`,
+`report` и `context` необязательны и по умолчанию используют стандартные пути.
+`--lab N` выбирает запись состояния, а не обязательно официальный номер: для
+титульника runner берёт `report_number`, если оно задано. `directory`
 переопределяет рабочий каталог `ЛРN`; указанная `methodical_guide` проверяется
-до сборки. `validate-state` проверяет метаданные без требования готового отчёта:
-типы полей, относительность путей, дубликаты артефактов, переносимость
-`commands` и ссылки `bundled:`. Он полезен при каждой правке состояния и не
-ломает legacy-ЛР, пока его не вызывают явно. `quality-gate` дополнительно
-проверяет структуру DOCX-отчёта и `text.docx`, сигнатуру PDF и только при успехе
-атомарно записывает `ЛРN/quality_gate.json` с SHA-256-манифестом входных и итоговых файлов. Этот файл содержит версию схемы, UTC-время, перечень проверок,
-относительные пути финальных документов и хеши; он не заменяет проверку текста PDF
-через `pdf_text.py`. После любых правок отчётных материалов запускай `verify-quality`:
-команда подтвердит актуальность `quality_gate.json` либо потребует повторить
-`quality-gate`. Runner останавливается с понятной ошибкой, если состояние или
-артефакты неполны.
+до сборки.
+
+`validate-state` проверяет метаданные без требования готового отчёта: типы
+полей, относительность путей, дубликаты артефактов, переносимость `commands` и
+ссылки `bundled:`. `build-text` собирает `text.docx`: по умолчанию читает
+стандартный `content_text.json`, а поля записи `text_content` и `text` могут
+переопределить соответственно источник содержимого и путь итогового документа.
+`build-pdf` создаёт PDF из DOCX сначала через Word COM, затем через LibreOffice
+как fallback. Если оба способа недоступны либо конвертация не удалась, runner
+завершается блокирующей ошибкой; нельзя считать PDF или quality gate успешными.
+
+`inspect-documents` структурно проверяет оба DOCX-документа — отчёт и
+`text.docx` — и извлекает текст PDF для содержательной проверки (пустые
+страницы, пропавшие или нарушившие порядок разделы). `prepare-report` выполняет
+полный цикл: собирает отчёт и конспект,
+создаёт PDF, запускает инспекцию документов и quality gate. Используй его после
+готовности исходных материалов; при любой блокирующей ошибке он останавливается
+и не объявляет работу готовой.
+
+`quality-gate` дополнительно проверяет структуру DOCX-отчёта и `text.docx`,
+сигнатуру PDF и только при успехе атомарно записывает `ЛРN/quality_gate.json` с
+SHA-256-манифестом входных и итоговых файлов. Этот файл содержит версию схемы,
+UTC-время, перечень проверок, относительные пути финальных документов и хеши;
+он не заменяет проверку текста PDF. После любых правок отчётных материалов
+запускай `verify-quality`: команда подтвердит актуальность `quality_gate.json`
+либо потребует повторить `quality-gate`. Runner останавливается с понятной
+ошибкой, если состояние или артефакты неполны.
 
 ## Скриншоты для отчёта (cdp.js + shot.ps1)
 
@@ -363,7 +398,7 @@ ASCII-safe.
 
 1. **Статика** (страница как есть) — headless, быстро и детерминированно:
    `node cdp.js launch --headless` →
-   `node cdp.js run --file ЛРN\Ex1.html --wait 300 --shot ЛРN\screenshots\ex1.png`
+   `node cdp.js run --file lab\ex1.html --wait 300 --shot lab\screenshots\ex1.png`
 
       `--file` предпочтительнее ручного `file:///` URL: харнес сам корректно
       экранирует пробелы и кириллицу в пути.
@@ -376,7 +411,7 @@ ASCII-safe.
    отключается последний DevTools-клиент. Поэтому снимок — `--os-shot`
    (вызов `shot.ps1` поверх окна Edge) **при живом CDP-соединении**, а обработка —
    `--dialog-action accept[:текст]|dismiss` прямо в очереди:
-   `... run --url ... --nowait-eval "prompt('пароль?')" --os-shot s1.png --dialog-action accept:ответ --shot s2.png`
+   `... run --url ... --nowait-eval "prompt('password?')" --os-shot s1.png --dialog-action accept:answer --shot s2.png`
 4. **Popup / новое окно** — открывай только доверенным щелчком
    `--click "селектор"` (Input.dispatchMouseEvent даёт user activation, и
    popup-блокироватор молчит; программный `.click()` — нет), затем
@@ -413,14 +448,19 @@ ASCII-safe.
 
 ## PDF (docx2pdf.ps1)
 
-Основной способ — MS Word через COM (скрипт скилла):
+Предпочтительный способ — runner-действие `build-pdf`: оно сначала использует
+MS Word через COM, затем LibreOffice как fallback, и не передаёт через shell
+кириллические пути или тему. При отсутствии либо сбое обоих способов runner
+должен завершиться блокирующей ошибкой; не переходи к успешному quality gate.
 
-```
-powershell -ExecutionPolicy Bypass -File <папка скилла>\scripts\docx2pdf.ps1 -Docx "ЛРN\Отчет_ЛРN.docx" -Pdf "ЛРN\Отчет_ЛРN.pdf"
+Для ручного запуска используй только уже ASCII-safe пути, например:
+
+```text
+powershell -ExecutionPolicy Bypass -File C:\tools\lab-skill\scripts\docx2pdf.ps1 -Docx C:\work\report.docx -Pdf C:\work\report.pdf
 ```
 
-Word не установлен — LibreOffice: `soffice --headless --convert-to pdf --outdir <папка> <файл.docx>`.
-Нет ни того ни другого — спроси пользователя, чем конвертировать.
+Если ручная конвертация также не имеет ни Word, ни LibreOffice, сообщи точную
+блокирующую причину и запроси доступный способ конвертации.
 
 
 
@@ -429,20 +469,21 @@ Word не установлен — LibreOffice: `soffice --headless --convert-to
 Не объявляй лабораторную готовой только по факту создания файлов. После сборки
 выполни и зафиксируй в `_lab_state.json`:
 
-1. bundled `inspect_docx.py` из папки скилла для структуры абзацев, таблиц,
-   листингов и рисунков; сначала с флагом `--summary`, а если он не поддержан —
-   без флага;
-2. DOCX → PDF через Word COM; если Word отсутствует — через LibreOffice;
-3. `pdf_text.py` для проверки текста PDF: нет ли пустых страниц, пропавших
-   разделов или нарушенного порядка;
-4. сверку с методичкой: все обязательные разделы, ссылки на файлы, листинги,
+1. предпочтительно `lab_runner.py --action inspect-documents`: он структурно
+   проверяет оба DOCX-документа и извлекает текст PDF для содержательной
+   проверки. При ручной проверке используй `inspect_docx.py` для структуры,
+   `docx_text.py` для текста DOCX и `pdf_text.py` для текста PDF;
+2. DOCX → PDF через `build-pdf`: Word COM, затем LibreOffice. Отсутствие или
+   сбой обоих конвертеров — блокирующая ошибка, не успешная проверка;
+3. сверку с методичкой: все обязательные разделы, ссылки на файлы, листинги,
    таблицы и изображения существуют. `lab_runner.py --action verify-report`
    дополнительно проверяет каждый `codefile` и `img` из `content.json`;
-5. после сборки всех документов выполни `lab_runner.py --action quality-gate`:
+4. после сборки всех документов выполни `lab_runner.py --action quality-gate`:
    он подтверждает ссылки, артефакты, структуру DOCX-отчёта и `text.docx`, а
    также сигнатуру PDF;
-6. проверку `text.docx`: в нём есть объяснение работы, порядок демонстрации с
-   путями и вопросы с подготовленными ответами.
+5. проверь `text.docx`: в нём есть объяснение работы, порядок демонстрации с
+   путями и вопросы с подготовленными ответами. Когда нужны все этапы,
+   `prepare-report` заменяет разрозненные сборку, инспекцию и quality gate.
 
 После каждого изменения `_lab_state.json` сначала проверь синтаксис командой,
 работающей одинаково в PowerShell, cmd.exe и POSIX-совместимых оболочках:
@@ -468,8 +509,11 @@ py -c "import json, pathlib; json.loads(pathlib.Path('_lab_state.json').read_tex
 выбрано неброским специально — не менять. Собирается тем же сборщиком, но
 без титульного листа и шапки — это личный конспект, не отчёт:
 
-```
-py _tools\make_docx.py --out ЛРN\text.docx --num N --theme "Тема" --content ЛРN\content_text.json --no-title
+При путях или теме с не-ASCII символами используй runner-действие
+`build-text`. Ручной запуск допустим только с ASCII-safe аргументами:
+
+```text
+py _tools\make_docx.py --out lab\text.docx --num 1 --theme "Sample theme" --content lab\content_text.json --no-title
 ```
 
 Без титульного листа `--context` не нужен. В `content_text.json`
@@ -493,7 +537,7 @@ py _tools\make_docx.py --out ЛРN\text.docx --num N --theme "Тема" --conten
    (если титульник вуза был адаптирован — проверь, что адаптация сохранилась).
 3. `make_docx.py` на месте, но нет флагов `--context` / `--no-title` —
    локальная версия устарела: сверь с bundled из скилла и допиши недостающие.
-4. Остальные инструменты (`cdp.js`, `shot.ps1`, `pdf_text.py`,
+4. Остальные инструменты (`cdp.js`, `shot.ps1`, `pdf_text.py`, `docx_text.py`,
    `inspect_docx.py`, `lab_runner.py`, `docx2pdf.ps1`) не копируются — бери из
    `<папка скилла>\scripts\` (одна копия = нет расхождений).
 5. `_context.json` отсутствует → Шаг 0, данные не выдумывать.
