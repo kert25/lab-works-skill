@@ -6,114 +6,162 @@
       "prompt": "сделай ЛР3 по методичке, методичка в ЛР3/методичка.pdf, вариант 7",
       "expected_output": "Шаг 0 (проверка _context.json, при пробелах — вопросы пользователю), затем полный цикл одной лабы: папка ЛР3, работа, скриншоты в ЛР3/screenshots/, Отчет_ЛР3.docx и Отчет_ЛР3.pdf, text.docx, обратная связь и ожидание проверки; никакой следующей лабы до согласования",
       "files": [],
-      "assertions": []
+      "expectations": [
+        "Проверяет или запрашивает _context.json, не выдумывая постоянные данные.",
+        "Планирует только ЛР3 и включает фактический PNG-результат, отчёт, PDF и text.docx."
+      ]
     },
     {
       "id": 2,
       "prompt": "это новый проект, лабораторные по веб-разработке, вуз МГУ ВМК, я Иванов Иван, группа 435, принимает доцент Петров П.П., вариант 3. Сделай ЛР1, методичку пришлю потом",
       "expected_output": "Универсальность: опрос недостающего (город, год, дисциплина, тема, образец титульника, git), создание _context.json с данными МГУ/Иванова, восстановление _tools/make_docx.py из скилла (остальные инструменты — из scripts/ скилла, без копирования в проект), адаптация титульника под образец; без методички — запросить её у пользователя, задание не выдумывать",
       "files": [],
-      "assertions": []
+      "expectations": [
+        "Запрашивает все недостающие данные одним списком, включая методичку и образец титульника.",
+        "Не придумывает тему или задание ЛР1 до получения методички."
+      ]
     },
     {
       "id": 3,
       "prompt": "готовлюсь к защите ЛР2, что мне показать преподу?",
       "expected_output": "Собирается/дополняется ЛР2/text.docx с планом демонстрации (какие файлы открыть, в каком порядке) и вопросами с ответами; краткий план демонстрации прямо в чате",
       "files": [],
-      "assertions": []
+      "expectations": [
+        "Предлагает text.docx как конспект для защиты, а не переименованный отчёт.",
+        "Даёт последовательный план демонстрации и вопросы с ответами."
+      ]
     },
     {
       "id": 4,
       "prompt": "Продолжи ЛР4: в корне есть _context.json и _lab_state.json, где next_step = 'Проверить PDF'.",
       "expected_output": "Агент читает оба файла, кратко показывает состояние ЛР4 и выполняет/предлагает только сохранённый следующий шаг; не повторяет опрос о вузе, студенте, варианте и теме.",
-      "files": [
-        "_context.json",
-        "_lab_state.json"
-      ],
-      "assertions": []
+      "files": ["_context.json", "_lab_state.json"],
+      "fixtures": {
+        "_context.json": "evals/fixtures/resume/_context.json",
+        "_lab_state.json": "evals/fixtures/resume/_lab_state.json"
+      },
+      "expectations": [
+        "Сначала читает _context.json и _lab_state.json.",
+        "Продолжает с проверки PDF и не повторяет уже подтверждённый опрос."
+      ]
     },
     {
       "id": 5,
       "prompt": "Собери отчёт ЛР1 в папке C:\\Учёба\\Лабораторные. Тема уже сохранена в _lab_state.json.",
       "expected_output": "Агент использует ASCII-safe запуск: номер ЛР передаётся аргументом, а кириллическая тема и пути читаются из UTF-8 состояния либо формируются внутри скрипта; пользовательский текст не транслитерируется.",
-      "files": [
-        "_lab_state.json",
-        "ЛР1/content.json"
-      ],
-      "assertions": []
+      "files": ["_lab_state.json", "ЛР1/content.json"],
+      "fixtures": {
+        "_lab_state.json": "evals/fixtures/report-number/_lab_state.json",
+        "ЛР1/content.json": "evals/fixtures/report-number/content.json"
+      },
+      "expectations": [
+        "Использует ASCII-safe вызов lab_runner из корня проекта.",
+        "Не транслитерирует и не передаёт кириллическую тему небезопасным shell-аргументом."
+      ]
     },
     {
       "id": 6,
       "prompt": "В отчёте ЛР2 нужны таблица сценариев и таблица результатов.",
       "expected_output": "Агент использует элементы table в content.json с rows, при необходимости widths и header; собирает DOCX и проверяет таблицы через inspect_docx.py.",
-      "files": [
-        "ЛР2/content.json"
-      ],
-      "assertions": []
+      "files": ["ЛР2/content.json"],
+      "fixtures": {
+        "ЛР2/content.json": "evals/fixtures/report-number/content.json"
+      },
+      "expectations": [
+        "Описывает table-элементы content.json с корректными rows и header.",
+        "Включает структурную проверку готового DOCX через inspect_docx.py или runner."
+      ]
     },
     {
       "id": 7,
       "prompt": "Word не установлен. Подготовь полный пакет ЛР3 к сдаче.",
       "expected_output": "После сборки DOCX агент пробует LibreOffice headless для PDF. Если LibreOffice тоже отсутствует, сообщает конкретную блокирующую причину и не заявляет, что quality gate пройден.",
       "files": [],
-      "assertions": []
+      "expectations": [
+        "Использует LibreOffice как fallback после недоступности Word.",
+        "Не объявляет quality gate успешным без созданного и проверенного PDF."
+      ]
     },
     {
       "id": 8,
       "prompt": "ЛР5 готова, проект использует git. Заверши работу.",
       "expected_output": "Агент проходит проверку артефактов, отчитывается и предлагает коммит, но не выполняет git commit без прямого согласия пользователя или commit_on_completion: true в _lab_state.json.",
-      "files": [
-        "_lab_state.json"
-      ],
-      "assertions": []
+      "files": ["_lab_state.json"],
+      "fixtures": {
+        "_lab_state.json": "evals/fixtures/resume/_lab_state.json"
+      },
+      "expectations": [
+        "Выполняет или предлагает quality gate перед завершением.",
+        "Предлагает коммит, но не делает его без явного разрешения."
+      ]
     },
     {
       "id": 9,
       "prompt": "Собери отчёт в папке ЛР1. В labs.1 указаны directory: ЛР1 и report_number: 9.",
       "expected_output": "Агент использует каталог ЛР1 и создаёт Отчет_ЛР1.docx, но передаёт в титульник официальный номер 9 из report_number; номер каталога не выдаётся за номер методички.",
-      "files": [
-        "_lab_state.json",
-        "ЛР1/content.json"
-      ],
-      "assertions": []
+      "files": ["_lab_state.json", "ЛР1/content.json"],
+      "fixtures": {
+        "_lab_state.json": "evals/fixtures/report-number/_lab_state.json",
+        "ЛР1/content.json": "evals/fixtures/report-number/content.json"
+      },
+      "expectations": [
+        "Использует directory как рабочий путь, а report_number как номер титульника.",
+        "Не подменяет официальный номер именем каталога."
+      ]
     },
     {
       "id": 10,
       "prompt": "Продолжи лабораторную с ключом 2: в состоянии directory = practice/module-a.",
       "expected_output": "Агент работает в practice/module-a, а не строит путь ЛР2; стандартный ключ labs используется только для выбора записи и legacy fallback.",
-      "files": [
-        "_lab_state.json"
-      ],
-      "assertions": []
+      "files": ["_lab_state.json"],
+      "fixtures": {
+        "_lab_state.json": "evals/fixtures/custom-directory/_lab_state.json"
+      },
+      "expectations": [
+        "Выбирает labs.2, но использует practice/module-a как каталог работы.",
+        "Не создаёт или не использует ЛР2 как подмену заданного directory."
+      ]
     },
     {
       "id": 11,
       "prompt": "ЛР4 и ЛР5 используют один локальный файл _libs/xml-helper.js. Подготовь обе.",
       "expected_output": "Агент фиксирует ссылку на общий ресурс через shared_resources и не копирует библиотеку в обе папки без причины.",
-      "files": [
-        "_lab_state.json",
-        "_libs/xml-helper.js"
-      ],
-      "assertions": []
+      "files": ["_lab_state.json", "_libs/xml-helper.js"],
+      "fixtures": {
+        "_lab_state.json": "evals/fixtures/shared-resource/_lab_state.json",
+        "_libs/xml-helper.js": "evals/fixtures/shared-resource/xml-helper.js"
+      },
+      "expectations": [
+        "Фиксирует общий файл через shared_resources с относительным путём.",
+        "Не дублирует xml-helper.js в каталогах лабораторных без необходимости."
+      ]
     },
     {
       "id": 12,
       "prompt": "В папке ЛР1 лежит методичка с номером 9, но в _lab_state.json report_number = 1. Собери отчёт.",
       "expected_output": "Агент замечает противоречие между методичкой и состоянием, показывает его и запрашивает уточнение; не угадывает номер, тему или задание по имени папки.",
-      "files": [
-        "_lab_state.json",
-        "ЛР1/методичка.pdf"
-      ],
-      "assertions": []
+      "files": ["_lab_state.json", "ЛР1/методичка.pdf"],
+      "fixtures": {
+        "_lab_state.json": "evals/fixtures/methodical-conflict/_lab_state.json",
+        "ЛР1/методичка.pdf": "evals/fixtures/methodical-conflict/методичка.pdf"
+      },
+      "expectations": [
+        "Явно показывает конфликт номера методички и report_number.",
+        "Запрашивает уточнение вместо молчаливого выбора номера или темы."
+      ]
     },
     {
       "id": 13,
       "prompt": "В записи ЛР2 указана methodical_guide: ЛР2/потерянная-методичка.pdf. Собери отчёт.",
       "expected_output": "Агент сообщает, что указанная методичка отсутствует, и просит предоставить или уточнить её путь; он не восстанавливает тему, номер или задание по имени каталога.",
-      "files": [
-        "_lab_state.json"
-      ],
-      "assertions": []
+      "files": ["_lab_state.json"],
+      "fixtures": {
+        "_lab_state.json": "evals/fixtures/missing-guide/_lab_state.json"
+      },
+      "expectations": [
+        "Проверяет существование methodical_guide до сборки.",
+        "Останавливает сборку и просит путь к методичке, не выдумывая данные."
+      ]
     }
   ]
 }

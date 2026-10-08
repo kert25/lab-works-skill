@@ -1,0 +1,7 @@
+{
+  "version": 2,
+  "labs": {
+    "4": {"status": "in_progress", "theme": "XML", "next_step": "Подготовить ресурсы"},
+    "5": {"status": "in_progress", "theme": "XML", "next_step": "Подготовить ресурсы"}
+  }
+}

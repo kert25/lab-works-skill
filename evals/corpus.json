@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "source_directory": "evals/corpus/methodical-guides",
+  "documents": [
+    {
+      "id": "test-design-pytest",
+      "path": "evals/corpus/methodical-guides/lr-03-test-design.docx",
+      "source_filename": "ЛАБОРАТОРНАЯ РАБОТА 3.docx",
+      "format": "docx",
+      "official_number": 3,
+      "topic": "Применение техник тест-дизайна",
+      "evaluation_value": [
+        "вариантозависимое индивидуальное задание",
+        "pytest и фактический тестовый отчёт",
+        "таблицы тест-кейсов и негативные сценарии"
+      ]
+    },
+    {
+      "id": "html-hyperlinks",
+      "path": "evals/corpus/methodical-guides/lr-02-hyperlinks.pdf",
+      "source_filename": "Лабораторная работа 2 _ Гиперссылки.pdf",
+      "format": "pdf",
+      "official_number": 2,
+      "topic": "Гиперссылки в HTML",
+      "evaluation_value": [
+        "браузерная лабораторная",
+        "относительные пути",
+        "проверка через CDP и снимки страницы"
+      ]
+    },
+    {
+      "id": "steganography",
+      "path": "evals/corpus/methodical-guides/lr-06-steganography.docx",
+      "source_filename": "Лабораторная работа 6.docx",
+      "format": "docx",
+      "official_number": 6,
+      "topic": "Методы стеганографии",
+      "evaluation_value": [
+        "несколько заданий в одном отчёте",
+        "CLI-доказательства",
+        "файловые артефакты и скриншоты"
+      ]
+    },
+    {
+      "id": "xml-dtd",
+      "path": "evals/corpus/methodical-guides/lr-13-xml-dtd.pdf",
+      "source_filename": "ЛР_13 Интернет_программирование_XML DTD.pdf",
+      "format": "pdf",
+      "official_number": 13,
+      "topic": "XML DTD",
+      "evaluation_value": [
+        "внешний DTD",
+        "валидный и намеренно невалидный XML",
+        "проверка валидатором и доказательство ошибок"
+      ]
+    },
+    {
+      "id": "functional-cost-analysis",
+      "path": "evals/corpus/methodical-guides/lr-01-functional-cost-analysis.pdf",
+      "source_filename": "МУ_ЛР_Проектирование .... _1_2 лаба.pdf",
+      "format": "pdf",
+      "official_number": 1,
+      "topic": "Стоимостной анализ и FAST-диаграммы",
+      "evaluation_value": [
+        "сборник нескольких лабораторных",
+        "проверка выбора официального номера",
+        "непрограммные артефакты и диаграммы"
+      ]
+    },
+    {
+      "id": "ui-ux-analysis",
+      "path": "evals/corpus/methodical-guides/pr-01-ui-ux-analysis.docx",
+      "source_filename": "Практическая работа 1.docx",
+      "format": "docx",
+      "official_number": 1,
+      "topic": "Основные принципы UX/UI дизайна",
+      "evaluation_value": [
+        "практическая, а не лабораторная работа",
+        "скриншоты внешних примеров",
+        "качественный анализ вместо исполнимого кода"
+      ]
+    }
+  ]
+}

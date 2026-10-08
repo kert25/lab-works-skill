@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "labs": {
+    "1": {
+      "status": "in_progress",
+      "directory": "ЛР1",
+      "report_number": 1,
+      "methodical_guide": "ЛР1/методичка.pdf",
+      "theme": "Тема из состояния",
+      "next_step": "Собрать отчёт"
+    }
+  }
+}

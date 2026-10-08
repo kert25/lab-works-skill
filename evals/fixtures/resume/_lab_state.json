@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "labs": {
+    "4": {
+      "status": "in_progress",
+      "directory": "ЛР4",
+      "theme": "Проверка PDF",
+      "next_step": "Проверить PDF",
+      "artifacts": ["ЛР4/Отчет_ЛР4.docx", "ЛР4/Отчет_ЛР4.pdf"]
+    }
+  }
+}

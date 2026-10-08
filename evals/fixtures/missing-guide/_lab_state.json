@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "labs": {
+    "2": {
+      "status": "in_progress",
+      "directory": "ЛР2",
+      "methodical_guide": "ЛР2/потерянная-методичка.pdf",
+      "theme": "Не подтверждена методичкой",
+      "next_step": "Собрать отчёт"
+    }
+  }
+}

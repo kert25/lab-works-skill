@@ -1,0 +1,12 @@
+{
+  "university": ["Тестовый университет"],
+  "discipline": "Веб-разработка",
+  "student": "Иванов Иван",
+  "group": "435",
+  "teacher": "Петров П.П.",
+  "teacher_title": "доцент",
+  "city": "Москва",
+  "year": "2026",
+  "variant": "7",
+  "git": true
+}

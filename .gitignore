@@ -1,0 +1,12 @@
+# Generated evaluation runs can contain copies of skills, agent outputs and review files.
+.skill-eval/workspace/
+
+# Local pinned copy of the upstream Anthropic tooling. Recreate with
+# `py .skill-eval/pipeline.py bootstrap`.
+.skill-eval/skill-creator/
+.skill-eval/anthropic-skills/
+
+# Python test and tool caches.
+__pycache__/
+*.py[cod]
+.pytest_cache/

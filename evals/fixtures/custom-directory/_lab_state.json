@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "labs": {
+    "2": {
+      "status": "in_progress",
+      "directory": "practice/module-a",
+      "theme": "Нестандартный каталог",
+      "next_step": "Продолжить работу"
+    }
+  }
+}

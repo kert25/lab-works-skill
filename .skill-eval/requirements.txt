@@ -1,0 +1,2 @@
+# Required by the upstream Anthropic skill-creator quick validator.
+PyYAML>=6.0,<7
