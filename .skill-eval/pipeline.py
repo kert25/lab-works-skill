@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 TOOLS = ROOT / ".skill-eval" / "skill-creator"
 WORKSPACE = ROOT / ".skill-eval" / "workspace"
 EVALS_PATH = ROOT / "evals" / "evals.json"
+UPSTREAM_PATH = ROOT / ".skill-eval" / "upstream.json"
+UPSTREAM_CHECKOUT = ROOT / ".skill-eval" / "anthropic-skills"
 SKILL_PATH = ROOT
 
 
@@ -293,25 +295,35 @@ def cmd_test(_: argparse.Namespace) -> None:
 
 
 def cmd_bootstrap(_: argparse.Namespace) -> None:
-    source = Path.home() / ".agents" / "skills" / "skill-creator"
+    upstream = read_json(UPSTREAM_PATH)
+    commit = upstream.get("commit")
+    if not isinstance(commit, str) or not commit:
+        fail(".skill-eval/upstream.json requires a pinned upstream commit")
+    source = UPSTREAM_CHECKOUT / "skills" / "skill-creator"
     if not source.is_dir():
-        fail("global skill-creator is not installed at ~/.agents/skills/skill-creator")
+        fail(
+            "pinned upstream checkout is absent; clone https://github.com/anthropics/skills.git "
+            "into .skill-eval/anthropic-skills and check out the commit from upstream.json"
+        )
+    revision = subprocess.run(
+        ["git", "-C", str(UPSTREAM_CHECKOUT), "rev-parse", "HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if revision.returncode or revision.stdout.strip() != commit:
+        fail(f"pinned upstream checkout must be at {commit}")
     if TOOLS.exists():
         shutil.rmtree(TOOLS)
     shutil.copytree(source, TOOLS)
-    write_json(ROOT / ".skill-eval" / "upstream.json", {
-        "repository": "https://github.com/anthropics/skills",
-        "skill_path": "skills/skill-creator",
-        "installed_from": str(source),
-        "bootstrapped_at": utc_now(),
-    })
-    print(f"Bootstrapped upstream tooling from {source}")
+    print(f"Bootstrapped upstream tooling from {source.relative_to(ROOT)} at {commit}")
 
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description="Evaluate and improve the lab-works skill locally")
     commands = result.add_subparsers(dest="command", required=True)
-    commands.add_parser("bootstrap", help="copy the installed global skill-creator into .skill-eval").set_defaults(func=cmd_bootstrap)
+    commands.add_parser("bootstrap", help="copy the pinned skill-creator checkout into .skill-eval").set_defaults(func=cmd_bootstrap)
     commands.add_parser("check", help="validate skill metadata, bundled references and eval catalog").set_defaults(func=cmd_check)
     prepare = commands.add_parser("prepare", help="create a timestamped paired-run iteration")
     prepare.add_argument("--iteration", help="name after iteration-; defaults to a UTC timestamp")

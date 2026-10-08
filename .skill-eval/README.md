@@ -11,25 +11,30 @@ origin  https://github.com/kert25/lab-works-skill.git
 
 ## One-time setup
 
-`skill-creator` is installed globally at `~/.agents/skills/skill-creator`.
-Install the only Python dependency for its upstream validator:
+Install the Python dependencies and retrieve the exact upstream revision
+recorded in `.skill-eval/upstream.json`:
 
 ```sh
-py -m pip install --user -r .skill-eval/requirements.txt
-py .skill-eval/pipeline.py bootstrap
+python -m pip install --user -r .skill-eval/requirements.txt
+git clone https://github.com/anthropics/skills.git .skill-eval/anthropic-skills
+git -C .skill-eval/anthropic-skills checkout --detach 683bc88e56f3e09ba94f7055977f3d3aa499f202
+python .skill-eval/pipeline.py bootstrap
 ```
 
-`bootstrap` copies the global skill into `.skill-eval/skill-creator/`, so all
-validator, benchmark, and review scripts are available locally. The initial copy
-was taken from `anthropics/skills` commit `683bc88e56f3e09ba94f7055977f3d3aa499f202`.
+The commands use `python`, which is available on this workstation. If the
+Python launcher is installed, `py` is an equivalent Windows alternative.
+
+`bootstrap` verifies that local checkout and copies its `skill-creator` into
+`.skill-eval/skill-creator/`, so the validator, benchmark, and review scripts
+are local and pinned. The checkout and copy are ignored by Git.
 
 ## Deterministic checks
 
 Run these before and after a skill change:
 
 ```sh
-py .skill-eval/pipeline.py check
-py .skill-eval/pipeline.py test
+python .skill-eval/pipeline.py check
+python .skill-eval/pipeline.py test
 ```
 
 `check` validates the frontmatter, referenced bundled scripts, and every eval
@@ -41,7 +46,7 @@ report/screenshot tooling.
 1. Snapshot the current version and create matching with-skill/baseline tasks:
 
    ```sh
-   py .skill-eval/pipeline.py prepare --iteration iteration-001
+   python .skill-eval/pipeline.py prepare --iteration iteration-001
    ```
 
 2. For each `<eval>/with_skill/run-1/task.json`, run an isolated Zed agent with
@@ -54,9 +59,9 @@ report/screenshot tooling.
    and update the `passed`/`evidence` fields in `grading.json`:
 
    ```sh
-   py .skill-eval/pipeline.py grade --iteration iteration-001
-   py .skill-eval/pipeline.py benchmark --iteration iteration-001
-   py .skill-eval/pipeline.py review --iteration iteration-001
+   python .skill-eval/pipeline.py grade --iteration iteration-001
+   python .skill-eval/pipeline.py benchmark --iteration iteration-001
+   python .skill-eval/pipeline.py review --iteration iteration-001
    ```
 
    The last command writes a self-contained
@@ -68,7 +73,7 @@ report/screenshot tooling.
    repeat with a new iteration. To compare a new iteration to the old viewer:
 
    ```sh
-   py .skill-eval/pipeline.py review --iteration iteration-002 --previous iteration-001
+   python .skill-eval/pipeline.py review --iteration iteration-002 --previous iteration-001
    ```
 
 ## Scope and limitation

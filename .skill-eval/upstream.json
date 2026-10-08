@@ -2,7 +2,7 @@
   "repository": "https://github.com/anthropics/skills",
   "skill_path": "skills/skill-creator",
   "commit": "683bc88e56f3e09ba94f7055977f3d3aa499f202",
-  "installed_globally_at": "~/.agents/skills/skill-creator",
+  "upstream_checkout": ".skill-eval/anthropic-skills",
   "local_copy": ".skill-eval/skill-creator",
   "retrieved_at": "2026-10-08T00:00:00Z"
 }
