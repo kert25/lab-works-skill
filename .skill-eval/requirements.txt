@@ -1,2 +1,6 @@
 # Required by the upstream Anthropic skill-creator quick validator.
 PyYAML>=6.0,<7
+
+# Used only by the real XML/DTD evaluation case; the skill must still detect
+# and report a missing validator in an end-user project.
+lxml>=5.0,<7

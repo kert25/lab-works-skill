@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "commit_on_completion": false,
+  "labs": {
+    "13": {
+      "status": "in_progress",
+      "directory": "ЛР13",
+      "methodical_guide": "ЛР13/методичка.pdf",
+      "report_number": 13,
+      "theme": "XML DTD",
+      "variant": "1",
+      "next_step": "Создать внешний DTD, валидный и невалидный XML, затем проверить валидатором",
+      "artifacts": []
+    }
+  }
+}
