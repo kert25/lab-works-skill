@@ -158,6 +158,7 @@ async function cmdLaunch(opts) {
   const profile = profileDir(opts);
   const args = [
     `--remote-debugging-port=${port}`,
+    "--remote-allow-origins=*",
     `--user-data-dir=${profile}`,
     "--no-first-run", "--no-default-browser-check", "--noerrdialogs",
     `--window-size=${opts.size || "1280,900"}`,
