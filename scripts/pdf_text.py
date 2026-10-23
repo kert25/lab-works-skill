@@ -11,6 +11,12 @@ with a warning; malformed or fully out-of-range ranges fail clearly.
 import argparse
 import sys
 
+if sys.platform == "win32":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 import fitz
 
 

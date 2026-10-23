@@ -43,27 +43,50 @@ report/screenshot tooling.
 
 ## Iterative agent evaluation
 
-1. Snapshot the current version and create matching with-skill/baseline tasks:
+1. Snapshot the current version and create matching with-skill/baseline tasks.
+   Start with one eval and one run while debugging a scenario; use three runs
+   only after its fixtures and criteria are stable:
 
    ```sh
-   python .skill-eval/pipeline.py prepare --iteration iteration-001
+   python .skill-eval/pipeline.py prepare --iteration iteration-001 --eval 5 --runs 1
    ```
+
+   Omit `--eval` to prepare the full catalog. Repeat `--eval` to select several
+   cases. Each run contains a writable `sandbox/`: it is a project-shaped copy
+   of that eval's read-only `inputs/`, so agents must use it as their working
+   directory instead of the repository root.
 
 2. For each `<eval>/with_skill/run-1/task.json`, run an isolated Zed agent with
    the snapshot skill path. For the matching `without_skill` task, run the same
    prompt without the skill. Put the final agent response in
-   `outputs/response.md` and its artifacts in the same `outputs/` directory.
-   Never let an eval agent write into the repository root.
+   `outputs/response.md`, generated artifacts in `outputs/`, and the actual
+   execution record in `transcript.md`. Never let an eval agent write into the
+   repository root or treat an absent input as evidence of a skill failure.
+
+   When the executor notification provides metrics, save them immediately:
+
+   ```sh
+   python .skill-eval/pipeline.py record-metrics --iteration iteration-001 \
+     --eval 5 --configuration with_skill --run 1 \
+     --duration-ms 23332 --total-tokens 84852
+   ```
+
+   Do not synthesize timing or token values. The pipeline omits unavailable
+   metrics from the benchmark rather than converting them to zero or response
+   length.
 
 3. Create reviewer-ready grading files, review each expectation independently,
    and update the `passed`/`evidence` fields in `grading.json`:
 
    ```sh
-   python .skill-eval/pipeline.py grade --iteration iteration-001
+   python .skill-eval/pipeline.py grade --iteration iteration-001 --eval 5
    python .skill-eval/pipeline.py benchmark --iteration iteration-001
    python .skill-eval/pipeline.py review --iteration iteration-001
    ```
 
+   `grade` does not overwrite an existing `grading.json` unless `--overwrite`
+   is passed. `benchmark` runs the upstream aggregator, then corrects its fixed
+   three-run assumption and preserves only metrics recorded in `timing.json`.
    The last command writes a self-contained
    `.skill-eval/workspace/iteration-001/review.html`, using the upstream
    `eval-viewer/generate_review.py`. Open it locally to compare outputs and

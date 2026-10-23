@@ -12,6 +12,7 @@ import argparse
 import json
 import re
 import shutil
+import statistics
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -55,6 +56,19 @@ def tool_path(*parts: str) -> Path:
     if not path.exists():
         fail("upstream skill-creator tooling is absent; run `py .skill-eval/pipeline.py bootstrap`")
     return path
+
+
+def select_cases(evals: dict[str, Any], selected_ids: list[int] | None) -> list[dict[str, Any]]:
+    """Return all cases or a requested non-empty subset in catalog order."""
+    cases = evals["evals"]
+    if not selected_ids:
+        return cases
+    wanted = set(selected_ids)
+    available = {case["id"] for case in cases}
+    unknown = sorted(wanted - available)
+    if unknown:
+        fail(f"unknown eval id(s): {', '.join(map(str, unknown))}")
+    return [case for case in cases if case["id"] in wanted]
 
 
 def validate_evals(evals: dict[str, Any]) -> list[str]:
@@ -170,6 +184,13 @@ def copy_inputs(case: dict[str, Any], destination: Path) -> None:
             shutil.copy2(source, target)
 
 
+def create_run_sandbox(inputs: Path, run_dir: Path) -> Path:
+    """Give an executor a writable project-shaped copy, preserving fixtures."""
+    sandbox = run_dir / "sandbox"
+    shutil.copytree(inputs, sandbox)
+    return sandbox
+
+
 def cmd_prepare(args: argparse.Namespace) -> None:
     cmd_check(args)
     iteration = args.iteration or datetime.now(timezone.utc).strftime("iteration-%Y%m%dT%H%M%SZ")
@@ -181,6 +202,7 @@ def cmd_prepare(args: argparse.Namespace) -> None:
     destination.mkdir(parents=True)
     shutil.copytree(SKILL_PATH, destination / "skill-snapshot", ignore=shutil.ignore_patterns(".git", ".skill-eval", "__pycache__", "*.pyc"))
     evals = read_json(EVALS_PATH)
+    cases = select_cases(evals, args.eval)
     manifest = {
         "created_at": utc_now(),
         "skill_name": "lab-works",
@@ -190,10 +212,12 @@ def cmd_prepare(args: argparse.Namespace) -> None:
             "with_skill": "Use skill-snapshot/SKILL.md and bundled resources.",
             "without_skill": "Do not load lab-works or any snapshot of it.",
         },
-        "runner_contract": "Write the agent's final response to outputs/response.md and produced files to outputs/. Then run grade and review.",
+        "runner_contract": "Use the run sandbox as the working project. Write the final response to outputs/response.md, a transcript to transcript.md, and artifacts to outputs/. Then run grade and review.",
+        "selected_evals": [case["id"] for case in cases],
+        "runs_per_configuration": args.runs,
     }
     write_json(destination / "manifest.json", manifest)
-    for case in evals["evals"]:
+    for case in cases:
         eval_dir = destination / evaluation_name(case)
         metadata = {
             "eval_id": case["id"],
@@ -206,21 +230,29 @@ def cmd_prepare(args: argparse.Namespace) -> None:
         write_json(eval_dir / "eval_metadata.json", metadata)
         copy_inputs(case, eval_dir / "inputs")
         for configuration in ("with_skill", "without_skill"):
-            run_dir = eval_dir / configuration / "run-1"
-            outputs = run_dir / "outputs"
-            outputs.mkdir(parents=True)
-            (outputs / "README.md").write_text(
-                "Place the agent final response in response.md and all generated artifacts in this directory.\n",
-                encoding="utf-8",
-            )
-            write_json(run_dir / "task.json", {
-                **metadata,
-                "configuration": configuration,
-                "skill_path": "../../../../skill-snapshot" if configuration == "with_skill" else None,
-                "inputs_path": "../../inputs",
-            })
-    print(f"Prepared {len(evals['evals'])} paired scenarios: {destination.relative_to(ROOT)}")
-    print("Run each task independently, save its response/artifacts into outputs/, then use `grade`.")
+            for run_number in range(1, args.runs + 1):
+                run_dir = eval_dir / configuration / f"run-{run_number}"
+                outputs = run_dir / "outputs"
+                outputs.mkdir(parents=True)
+                create_run_sandbox(eval_dir / "inputs", run_dir)
+                (outputs / "README.md").write_text(
+                    "Use ../sandbox as the writable project root. Place the final response in response.md and produced artifacts in this directory.\n",
+                    encoding="utf-8",
+                )
+                write_json(run_dir / "task.json", {
+                    **metadata,
+                    "configuration": configuration,
+                    "run_number": run_number,
+                    "skill_path": "../../../../skill-snapshot" if configuration == "with_skill" else None,
+                    "inputs_path": "../../inputs",
+                    "sandbox_path": "sandbox",
+                    "working_directory": "sandbox",
+                    "outputs_path": "outputs",
+                    "transcript_path": "transcript.md",
+                    "timing_path": "timing.json",
+                })
+    print(f"Prepared {len(cases)} paired scenario(s), {args.runs} run(s) each: {destination.relative_to(ROOT)}")
+    print("Run each task independently in its sandbox, save response/artifacts/transcript, then use `grade`.")
 
 
 def git_revision() -> str | None:
@@ -237,30 +269,64 @@ def text_for_run(run_dir: Path) -> str:
     return "".join(chunks)
 
 
+def run_directories(iteration: Path, selected_ids: list[int] | None) -> list[Path]:
+    directories: list[Path] = []
+    wanted = set(selected_ids or [])
+    for metadata_path in sorted(iteration.glob("eval-*/eval_metadata.json")):
+        metadata = read_json(metadata_path)
+        if wanted and metadata["eval_id"] not in wanted:
+            continue
+        directories.extend(sorted(metadata_path.parent.glob("*/run-*")))
+    return directories
+
+
 def cmd_grade(args: argparse.Namespace) -> None:
     iteration = require_iteration(args.iteration)
     graded = 0
-    for metadata_path in sorted(iteration.glob("eval-*/eval_metadata.json")):
-        metadata = read_json(metadata_path)
-        for run_dir in sorted(metadata_path.parent.glob("*/run-*")):
-            text = text_for_run(run_dir)
-            expectations = []
-            for assertion in metadata["assertions"]:
-                expectations.append({
-                    "text": assertion,
-                    "passed": False,
-                    "evidence": "Requires independent grader or human review; automated text assertions are intentionally not used for semantic agent behavior.",
-                })
-            grading = {
-                "expectations": expectations,
-                "summary": {"passed": 0, "failed": len(expectations), "total": len(expectations), "pass_rate": 0.0},
-                "execution_metrics": {"total_tool_calls": 0, "errors_encountered": 0, "output_chars": len(text)},
-                "user_notes_summary": {"uncertainties": [], "needs_review": ["Replace placeholder grades after reviewing the agent output."], "workarounds": []},
-            }
-            write_json(run_dir / "grading.json", grading)
-            graded += 1
-    print(f"Created reviewer-ready grading templates for {graded} runs in {iteration.relative_to(ROOT)}.")
+    skipped = 0
+    for run_dir in run_directories(iteration, args.eval):
+        grading_path = run_dir / "grading.json"
+        if grading_path.exists() and not args.overwrite:
+            skipped += 1
+            continue
+        metadata = read_json(run_dir.parents[1] / "eval_metadata.json")
+        text = text_for_run(run_dir)
+        expectations = [{
+            "text": assertion,
+            "passed": False,
+            "evidence": "Requires independent grader or human review; automated text assertions are intentionally not used for semantic agent behavior.",
+        } for assertion in metadata["assertions"]]
+        grading = {
+            "expectations": expectations,
+            "summary": {"passed": 0, "failed": len(expectations), "total": len(expectations), "pass_rate": 0.0},
+            "execution_metrics": {"total_tool_calls": None, "errors_encountered": 0, "output_chars": len(text)},
+            "user_notes_summary": {"uncertainties": [], "needs_review": ["Replace placeholder grades after reviewing the agent output."], "workarounds": []},
+        }
+        write_json(grading_path, grading)
+        graded += 1
+    print(f"Created {graded} grading template(s), skipped {skipped} existing grade(s) in {iteration.relative_to(ROOT)}.")
     print("Update grading.json with an independent reviewer, then run `benchmark` and `review`.")
+
+
+def cmd_record_metrics(args: argparse.Namespace) -> None:
+    iteration = require_iteration(args.iteration)
+    candidates = [path for path in run_directories(iteration, [args.eval]) if path.name == f"run-{args.run}" and path.parent.name == args.configuration]
+    if len(candidates) != 1:
+        fail(f"expected one run for eval {args.eval}, {args.configuration}, run {args.run}; found {len(candidates)}")
+    if args.duration_ms is None and args.total_tokens is None:
+        fail("provide --duration-ms and/or --total-tokens")
+    timing: dict[str, Any] = {"recorded_at": utc_now()}
+    if args.duration_ms is not None:
+        if args.duration_ms < 0:
+            fail("--duration-ms must be non-negative")
+        timing["duration_ms"] = args.duration_ms
+        timing["total_duration_seconds"] = round(args.duration_ms / 1000, 3)
+    if args.total_tokens is not None:
+        if args.total_tokens < 0:
+            fail("--total-tokens must be non-negative")
+        timing["total_tokens"] = args.total_tokens
+    write_json(candidates[0] / "timing.json", timing)
+    print(f"Recorded measured metrics: {candidates[0].relative_to(ROOT) / 'timing.json'}")
 
 
 def require_iteration(name: str | None) -> Path:
@@ -273,10 +339,92 @@ def require_iteration(name: str | None) -> Path:
     return path
 
 
+def metric_stats(values: list[float | int]) -> dict[str, float | int] | None:
+    if not values:
+        return None
+    return {
+        "mean": round(statistics.fmean(values), 4),
+        "stddev": round(statistics.pstdev(values), 4),
+        "min": min(values),
+        "max": max(values),
+    }
+
+
+def postprocess_benchmark(iteration: Path) -> None:
+    """Remove upstream placeholder metrics and report the actual run count."""
+    path = iteration / "benchmark.json"
+    benchmark = read_json(path)
+    run_counts: dict[str, list[int]] = {}
+    summaries: dict[str, dict[str, list[float | int]]] = {}
+    for run_item in benchmark.get("runs", []):
+        result = run_item.get("result", {})
+        run_dir = next((candidate for candidate in run_directories(iteration, [run_item["eval_id"]]) if candidate.parent.name == run_item["configuration"] and candidate.name == f"run-{run_item["run_number"]}"), None)
+        timing = read_json(run_dir / "timing.json") if run_dir and (run_dir / "timing.json").exists() else {}
+        if "total_duration_seconds" not in timing:
+            result["time_seconds"] = None
+        else:
+            result["time_seconds"] = timing["total_duration_seconds"]
+        if "total_tokens" not in timing:
+            result["tokens"] = None
+        else:
+            result["tokens"] = timing["total_tokens"]
+        config = run_item["configuration"]
+        summaries.setdefault(config, {"pass_rate": [], "time_seconds": [], "tokens": []})
+        summaries[config]["pass_rate"].append(result.get("pass_rate", 0.0))
+        for metric in ("time_seconds", "tokens"):
+            if result.get(metric) is not None:
+                summaries[config][metric].append(result[metric])
+        run_counts.setdefault(config, []).append(run_item["run_number"])
+    run_summary: dict[str, Any] = {}
+    for config, metrics in summaries.items():
+        run_summary[config] = {name: metric_stats(values) for name, values in metrics.items()}
+    configs = list(summaries)
+    if len(configs) >= 2:
+        primary, baseline = configs[:2]
+        pass_delta = (run_summary[primary]["pass_rate"] or {"mean": 0})["mean"] - (run_summary[baseline]["pass_rate"] or {"mean": 0})["mean"]
+        delta: dict[str, str | None] = {"pass_rate": f"{pass_delta:+.2f}"}
+        for metric, suffix in (("time_seconds", ".1f"), ("tokens", ".0f")):
+            first = run_summary[primary][metric]
+            second = run_summary[baseline][metric]
+            delta[metric] = format(first["mean"] - second["mean"], f"+{suffix}") if first and second else None
+        run_summary["delta"] = delta
+    benchmark["run_summary"] = run_summary
+    counts = [len(set(values)) for values in run_counts.values()]
+    benchmark.setdefault("metadata", {})["runs_per_configuration"] = counts[0] if counts and len(set(counts)) == 1 else "variable"
+    benchmark["metadata"]["measured_metrics_only"] = True
+    write_json(path, benchmark)
+    metadata = benchmark["metadata"]
+    lines = [
+        f"# Skill Benchmark: {metadata['skill_name']}",
+        "",
+        f"**Evals**: {', '.join(map(str, metadata.get('evals_run', [])))} ({metadata['runs_per_configuration']} measured run(s) per configuration)",
+        "",
+        "## Summary",
+        "",
+        "| Metric | With Skill | Without Skill | Delta |",
+        "|---|---:|---:|---:|",
+    ]
+    for metric, label in (("pass_rate", "Pass rate"), ("time_seconds", "Time (s)"), ("tokens", "Tokens")):
+        primary = run_summary.get("with_skill", {}).get(metric)
+        baseline = run_summary.get("without_skill", {}).get(metric)
+        delta = run_summary.get("delta", {}).get(metric)
+        def format_stat(stat: dict[str, float | int] | None, percent: bool = False) -> str:
+            if not stat:
+                return "not measured"
+            value = stat["mean"] * 100 if percent else stat["mean"]
+            deviation = stat["stddev"] * 100 if percent else stat["stddev"]
+            suffix = "%" if percent else ""
+            return f"{value:.1f}{suffix} ± {deviation:.1f}{suffix}"
+        lines.append(f"| {label} | {format_stat(primary, metric == 'pass_rate')} | {format_stat(baseline, metric == 'pass_rate')} | {delta or 'not measured'} |")
+    (iteration / "benchmark.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def cmd_benchmark(args: argparse.Namespace) -> None:
     iteration = require_iteration(args.iteration)
     aggregator = tool_path("scripts", "aggregate_benchmark.py")
     run([sys.executable, str(aggregator), str(iteration), "--skill-name", "lab-works", "--skill-path", str(SKILL_PATH)])
+    postprocess_benchmark(iteration)
+    print("Normalized benchmark metadata and retained only explicitly recorded timing/token metrics.")
 
 
 def cmd_review(args: argparse.Namespace) -> None:
@@ -292,6 +440,7 @@ def cmd_review(args: argparse.Namespace) -> None:
 def cmd_test(_: argparse.Namespace) -> None:
     run([sys.executable, "-m", "unittest", "discover", "-s", "scripts/tests", "-p", "test_*.py"])
     run(["node", "--test", "scripts/tests/test_cdp.js"])
+    run(["node", "--test", "scripts/tests/test_capture_cdp.js"])
 
 
 def cmd_bootstrap(_: argparse.Namespace) -> None:
@@ -327,10 +476,22 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("check", help="validate skill metadata, bundled references and eval catalog").set_defaults(func=cmd_check)
     prepare = commands.add_parser("prepare", help="create a timestamped paired-run iteration")
     prepare.add_argument("--iteration", help="name after iteration-; defaults to a UTC timestamp")
+    prepare.add_argument("--eval", type=int, action="append", help="eval id to prepare; repeat to select several")
+    prepare.add_argument("--runs", type=int, default=1, choices=range(1, 10), metavar="N", help="independent runs per configuration (default: 1)")
     prepare.set_defaults(func=cmd_prepare)
-    grade = commands.add_parser("grade", help="create grading templates for a completed iteration")
+    grade = commands.add_parser("grade", help="create grading templates for completed runs")
     grade.add_argument("--iteration", required=True)
+    grade.add_argument("--eval", type=int, action="append", help="only grade selected eval id(s)")
+    grade.add_argument("--overwrite", action="store_true", help="replace existing grading.json files")
     grade.set_defaults(func=cmd_grade)
+    metrics = commands.add_parser("record-metrics", help="record duration/tokens reported by an executor")
+    metrics.add_argument("--iteration", required=True)
+    metrics.add_argument("--eval", type=int, required=True)
+    metrics.add_argument("--configuration", required=True, choices=("with_skill", "without_skill"))
+    metrics.add_argument("--run", type=int, default=1)
+    metrics.add_argument("--duration-ms", type=int)
+    metrics.add_argument("--total-tokens", type=int)
+    metrics.set_defaults(func=cmd_record_metrics)
     benchmark = commands.add_parser("benchmark", help="aggregate completed grades with upstream tooling")
     benchmark.add_argument("--iteration", required=True)
     benchmark.set_defaults(func=cmd_benchmark)

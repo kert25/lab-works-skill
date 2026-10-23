@@ -267,6 +267,29 @@ class RunnerQualityRecordTest(unittest.TestCase):
             lab_runner.quality_gate(self.root, 1, self.lab)
         self.assertEqual(record_path.read_text(encoding="utf-8"), '{"status": "previous"}\n')
 
+    def test_verify_report_ignores_absent_quality_gate_json_in_artifacts(self):
+        lab = dict(self.lab)
+        lab["artifacts"] = list(self.lab["artifacts"]) + ["ЛР1/quality_gate.json"]
+        self.assertFalse((self.lab_dir / "quality_gate.json").exists())
+        lab_runner.verify_report(self.root, 1, lab)
+
+    def test_quality_gate_updates_lab_state(self):
+        state_path = self.root / "_lab_state.json"
+        initial_state = {
+            "version": 2,
+            "labs": {
+                "1": {
+                    "theme": "Topic",
+                    "artifacts": ["ЛР1/Отчет_ЛР1.docx", "ЛР1/Отчет_ЛР1.pdf", "ЛР1/text.docx"],
+                }
+            }
+        }
+        state_path.write_text(json.dumps(initial_state, ensure_ascii=False, indent=2), encoding="utf-8")
+        lab_runner.quality_gate(self.root, 1, initial_state["labs"]["1"])
+        updated_state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertIn("ЛР1/quality_gate.json", updated_state["labs"]["1"]["artifacts"])
+        self.assertEqual(updated_state["labs"]["1"]["verification"]["status"], "passed")
+
 
 class DocxTextTest(unittest.TestCase):
     def test_extract_docx_text_returns_visible_paragraphs(self):
@@ -280,6 +303,53 @@ class DocxTextTest(unittest.TestCase):
                     '<w:p><w:r><w:t>Second</w:t></w:r></w:p></w:body></w:document>',
                 )
             self.assertEqual(docx_text.extract_docx_text(path), "First\nSecond")
+
+
+class ReadGuideAndInitTextTest(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tempdir.name)
+        self.lab_dir = self.root / "ЛР1"
+        self.lab_dir.mkdir()
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def test_read_guide_and_init_text(self):
+        guide_path = self.lab_dir / "guide.docx"
+        guide_xml = (
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            '<w:body>'
+            '<w:p><w:r><w:t>Тема: Введение в веб</w:t></w:r></w:p>'
+            '<w:p><w:r><w:t>Контрольные вопросы:</w:t></w:r></w:p>'
+            '<w:p><w:r><w:t>1. Что такое DOM дерево?</w:t></w:r></w:p>'
+            '<w:p><w:r><w:t>2. Чем отличается flex от grid?</w:t></w:r></w:p>'
+            '</w:body></w:document>'
+        )
+        with zipfile.ZipFile(guide_path, "w") as archive:
+            archive.writestr("word/document.xml", guide_xml)
+
+        lab = {
+            "theme": "Введение в веб",
+            "methodical_guide": "ЛР1/guide.docx",
+        }
+
+        # 1. Тест read_guide с выводом в файл
+        out_txt = self.lab_dir / "guide_dump.txt"
+        text = lab_runner.read_guide(self.root, 1, lab, out_path=str(out_txt))
+        self.assertIn("Что такое DOM дерево?", text)
+        self.assertTrue(out_txt.is_file())
+        self.assertEqual(out_txt.read_text(encoding="utf-8"), text)
+
+        # 2. Тест init_text
+        lab_runner.init_text(self.root, 1, lab)
+        text_content_path = self.lab_dir / "content_text.json"
+        self.assertTrue(text_content_path.is_file())
+        items = json.loads(text_content_path.read_text(encoding="utf-8"))
+        p_texts = [it["p"] for it in items if "p" in it]
+        self.assertTrue(any("Что такое DOM дерево?" in p for p in p_texts))
+        self.assertTrue(any("Чем отличается flex от grid?" in p for p in p_texts))
+        self.assertTrue(any("Ответ:" in p for p in p_texts))
 
 
 if __name__ == "__main__":

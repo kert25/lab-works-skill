@@ -8,6 +8,12 @@
 import argparse
 import sys, zipfile, xml.etree.ElementTree as ET
 
+if sys.platform == "win32":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 def rpr_info(rpr):
