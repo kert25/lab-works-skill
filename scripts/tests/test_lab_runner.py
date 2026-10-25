@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 import json
+import struct
 import subprocess
 import sys
 import tempfile
-import zipfile
 import unittest
+import zipfile
+import zlib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,6 +14,112 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import docx_text  # noqa: E402
 import lab_runner  # noqa: E402
+
+
+def base_context():
+    return {
+        "university": ["Test University"],
+        "discipline": "Web technologies",
+        "student": "Ivanov I.I.",
+        "group": "435",
+        "teacher": "Petrov P.P.",
+        "teacher_title": "Docent",
+        "city": "Moscow",
+        "year": "2026",
+    }
+
+
+def report_content():
+    return [
+        {"h": "Goal"},
+        {"p": "Describe the purpose of the laboratory work in a complete sentence."},
+        {"h": "Task"},
+        {"p": "Describe the assignment and the variant used for the work."},
+        {"h": "Result"},
+        {"p": "Describe the produced artifacts and the observed result."},
+    ]
+
+
+def notes_content():
+    filler = "This concise defence note explains the work and its demonstration order. "
+    return [
+        {"h": "Summary"},
+        {"p": filler * 4},
+        {"h": "Questions"},
+        {"p": ("Question: how does it work? Answer: " + filler) * 3},
+    ]
+
+
+def write_png(path, width=800, height=600, blank=False):
+    """Write a valid 8-bit RGB PNG: either a flat frame or a striped one."""
+    if blank:
+        rows = [b"\x00" + b"\xff\xff\xff" * width for _ in range(height)]
+    else:
+        stripe = b"\x00" + b"".join(
+            (b"\x00\x00\x00" if (x // 40) % 2 else b"\xff\xff\xff") for x in range(width)
+        )
+        rows = [stripe for _ in range(height)]
+    raw = b"".join(rows)
+
+    def chunk(kind, payload):
+        return (struct.pack(">I", len(payload)) + kind + payload
+                + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF))
+
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw, 6))
+        + chunk(b"IEND", b"")
+    )
+
+
+def write_pdf(path, pages=("Page one text", "Page two text")):
+    """Write a minimal valid PDF with one text page per entry."""
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        ("<< /Type /Pages /Kids [%s] /Count %d >>" % (
+            " ".join("%d 0 R" % (3 + index) for index in range(len(pages))), len(pages)
+        )).encode(),
+    ]
+    font_number = 3 + len(pages) * 2
+    for index in range(len(pages)):
+        objects.append(("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+                        "/Resources << /Font << /F1 %d 0 R >> >> /Contents %d 0 R >>" %
+                        (font_number, 3 + len(pages) + index)).encode())
+    for text in pages:
+        escaped = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+        stream = ("BT /F1 12 Tf 50 800 Td (%s) Tj ET" % escaped).encode("ascii")
+        objects.append(b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream")
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    body = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, obj in enumerate(objects, 1):
+        offsets.append(len(body))
+        body += ("%d 0 obj\n" % number).encode() + obj + b"\nendobj\n"
+    xref_at = len(body)
+    body += ("xref\n0 %d\n" % (len(objects) + 1)).encode() + b"0000000000 65535 f \n"
+    for offset in offsets:
+        body += ("%010d 00000 n \n" % offset).encode()
+    body += ("trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" %
+             (len(objects) + 1, xref_at)).encode()
+    path.write_bytes(bytes(body))
+
+
+def write_documents(root, directory="ЛР1", number=1):
+    """Build a complete report set: DOCX, PDF, text.docx and content.json."""
+    lab_dir = root / directory
+    lab_dir.mkdir(parents=True, exist_ok=True)
+    context = base_context()
+    content = report_content()
+    lab_runner.build(str(lab_dir / ("Отчет_ЛР%d.docx" % number)), number, "Topic",
+                     content, str(lab_dir), context, title=True)
+    lab_runner.build(str(lab_dir / "text.docx"), number, "Topic",
+                     notes_content(), str(lab_dir), None, title=False)
+    write_pdf(lab_dir / ("Отчет_ЛР%d.pdf" % number))
+    (lab_dir / "content.json").write_text(
+        json.dumps(content, ensure_ascii=False), encoding="utf-8"
+    )
+    return lab_dir
 
 
 class RunnerPathsTest(unittest.TestCase):
@@ -119,12 +227,26 @@ class RunnerBuildTest(unittest.TestCase):
     def test_verify_report_checks_code_and_image_references(self):
         lab_dir = self.root / "ЛР1"
         (lab_dir / "Ex1.html").write_text("<html></html>", encoding="utf-8")
-        (lab_dir / "shot.png").write_bytes(b"PNG")
+        write_png(lab_dir / "shot.png")
         (lab_dir / "content.json").write_text(
-            json.dumps([{"codefile": "Ex1.html"}, {"img": "shot.png"}]),
+            json.dumps([
+                {"h": "Результат выполнения"},
+                {"img": "shot.png"},
+                {"codefile": "Ex1.html"},
+            ]),
             encoding="utf-8",
         )
         lab_runner.verify_report(self.root, 1, {"artifacts": ["ЛР1/Ex1.html"]})
+
+    def test_verify_report_requires_result_section_for_code(self):
+        lab_dir = self.root / "ЛР1"
+        (lab_dir / "Ex1.html").write_text("<html></html>", encoding="utf-8")
+        (lab_dir / "content.json").write_text(
+            json.dumps([{"h": "Goal"}, {"codefile": "Ex1.html"}]),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(SystemExit, "Результат выполнения"):
+            lab_runner.verify_report(self.root, 1, {"artifacts": ["ЛР1/Ex1.html"]})
 
     def test_verify_report_rejects_missing_content_reference(self):
         lab_dir = self.root / "ЛР1"
@@ -151,13 +273,7 @@ class RunnerBuildTest(unittest.TestCase):
         self.assertEqual(pdf.read_bytes()[:4], b"%PDF")
 
     def test_quality_gate_checks_report_pdf_and_cheat_sheet(self):
-        lab_dir = self.root / "ЛР1"
-        report = lab_dir / "Отчет_ЛР1.docx"
-        cheat_sheet = lab_dir / "text.docx"
-        for document in (report, cheat_sheet):
-            with zipfile.ZipFile(document, "w") as archive:
-                archive.writestr("word/document.xml", "<document />")
-        (lab_dir / "Отчет_ЛР1.pdf").write_bytes(b"%PDF-1.7\n")
+        lab_dir = write_documents(self.root)
         lab = {
             "artifacts": [
                 "ЛР1/Отчет_ЛР1.docx",
@@ -166,12 +282,10 @@ class RunnerBuildTest(unittest.TestCase):
             ]
         }
         lab_runner.quality_gate(self.root, 1, lab)
+        self.assertTrue((lab_dir / "quality_gate.json").is_file())
 
     def test_quality_gate_rejects_invalid_pdf(self):
-        lab_dir = self.root / "ЛР1"
-        for name in ("Отчет_ЛР1.docx", "text.docx"):
-            with zipfile.ZipFile(lab_dir / name, "w") as archive:
-                archive.writestr("word/document.xml", "<document />")
+        lab_dir = write_documents(self.root)
         (lab_dir / "Отчет_ЛР1.pdf").write_bytes(b"not a PDF")
         lab = {"artifacts": ["ЛР1/Отчет_ЛР1.docx", "ЛР1/Отчет_ЛР1.pdf", "ЛР1/text.docx"]}
         with self.assertRaisesRegex(SystemExit, "сигнатуры"):
@@ -236,13 +350,7 @@ class RunnerQualityRecordTest(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
         self.root = Path(self.tempdir.name)
-        self.lab_dir = self.root / "ЛР1"
-        self.lab_dir.mkdir()
-        for name in ("Отчет_ЛР1.docx", "text.docx"):
-            with zipfile.ZipFile(self.lab_dir / name, "w") as archive:
-                archive.writestr("word/document.xml", "<document />")
-        (self.lab_dir / "Отчет_ЛР1.pdf").write_bytes(b"%PDF-1.7\n")
-        (self.lab_dir / "content.json").write_text("[]", encoding="utf-8")
+        self.lab_dir = write_documents(self.root)
         self.lab = {
             "theme": "Topic",
             "artifacts": ["ЛР1/Отчет_ЛР1.docx", "ЛР1/Отчет_ЛР1.pdf", "ЛР1/text.docx"],
@@ -254,7 +362,8 @@ class RunnerQualityRecordTest(unittest.TestCase):
     def test_quality_gate_writes_portable_record(self):
         lab_runner.quality_gate(self.root, 1, self.lab)
         record = json.loads((self.lab_dir / "quality_gate.json").read_text(encoding="utf-8"))
-        self.assertEqual(record["schema_version"], 2)
+        self.assertEqual(record["schema_version"], 3)
+        self.assertIn("report_structure", record["checks"])
         self.assertEqual(record["status"], "passed")
         self.assertTrue(record["checked_at"].endswith("Z"))
         self.assertEqual(record["files"], ["ЛР1/Отчет_ЛР1.docx", "ЛР1/Отчет_ЛР1.pdf", "ЛР1/text.docx"])
@@ -289,6 +398,72 @@ class RunnerQualityRecordTest(unittest.TestCase):
         updated_state = json.loads(state_path.read_text(encoding="utf-8"))
         self.assertIn("ЛР1/quality_gate.json", updated_state["labs"]["1"]["artifacts"])
         self.assertEqual(updated_state["labs"]["1"]["verification"]["status"], "passed")
+
+
+class ReportStructureGateTest(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tempdir.name)
+        self.lab_dir = write_documents(self.root)
+        self.lab = {
+            "theme": "Topic",
+            "artifacts": ["ЛР1/Отчет_ЛР1.docx", "ЛР1/Отчет_ЛР1.pdf", "ЛР1/text.docx"],
+        }
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def test_gate_rejects_title_only_report(self):
+        (self.lab_dir / "content.json").write_text("[]", encoding="utf-8")
+        lab_runner.build(
+            str(self.lab_dir / "Отчет_ЛР1.docx"), 1, "Topic", [],
+            str(self.lab_dir), base_context(), title=True,
+        )
+        with self.assertRaisesRegex(SystemExit, "раздел"):
+            lab_runner.quality_gate(self.root, 1, self.lab)
+        self.assertFalse((self.lab_dir / "quality_gate.json").exists())
+
+    def test_gate_rejects_blank_evidence(self):
+        (self.lab_dir / "app.py").write_text("print('hi')\n", encoding="utf-8")
+        write_png(self.lab_dir / "shot.png", blank=True)
+        content = report_content() + [
+            {"h": "Результат выполнения"},
+            {"img": "shot.png", "caption": "Рисунок 1 — вывод"},
+            {"codefile": "app.py"},
+        ]
+        (self.lab_dir / "content.json").write_text(
+            json.dumps(content, ensure_ascii=False), encoding="utf-8"
+        )
+        with self.assertRaisesRegex(SystemExit, "пустое"):
+            lab_runner.quality_gate(self.root, 1, self.lab)
+
+    def test_gate_rejects_placeholder_notes(self):
+        placeholder = [{"p": "Ответ: [Сформулируйте развернутый академический ответ] " * 6}]
+        lab_runner.build(
+            str(self.lab_dir / "text.docx"), 1, "Topic",
+            notes_content() + placeholder, str(self.lab_dir), None, title=False,
+        )
+        with self.assertRaisesRegex(SystemExit, "заглушки"):
+            lab_runner.quality_gate(self.root, 1, self.lab)
+
+    def test_gate_records_warning_without_pymupdf(self):
+        with patch.object(lab_runner, "pdf_page_count", return_value=None):
+            lab_runner.quality_gate(self.root, 1, self.lab)
+        record = json.loads((self.lab_dir / "quality_gate.json").read_text(encoding="utf-8"))
+        self.assertTrue(record["warnings"])
+        self.assertIn("PyMuPDF", record["warnings"][0])
+
+    def test_blank_screenshot_is_rejected(self):
+        image = self.root / "blank.png"
+        write_png(image, blank=True)
+        with self.assertRaisesRegex(SystemExit, "пустое"):
+            lab_runner.check_screenshot(image)
+
+    def test_textured_screenshot_is_accepted(self):
+        image = self.root / "textured.png"
+        write_png(image)
+        lab_runner.check_screenshot(image)
+        self.assertGreater(image.stat().st_size, 0)
 
 
 class DocxTextTest(unittest.TestCase):

@@ -17,7 +17,10 @@ if sys.platform == "win32":
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-import fitz
+try:
+    import pymupdf as fitz
+except ImportError:  # старая версия библиотеки называет модуль fitz
+    import fitz
 
 
 def parse_pages(value, page_count):

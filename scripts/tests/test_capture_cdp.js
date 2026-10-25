@@ -5,7 +5,7 @@ const assert = require("assert");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { parseArgs, findBrowser, generateCliTerminalHtml, capture } = require("../capture_cdp.js");
+const { parseArgs, findBrowser, generateCliTerminalHtml, capture, decodeOutput, ansiToHtml } = require("../capture_cdp.js");
 
 async function run() {
   // 1. Тест парсинга аргументов
@@ -24,6 +24,20 @@ async function run() {
   assert.ok(html.includes("echo &#39;test&#39;"));
   assert.ok(html.includes("result output"));
   assert.ok(html.includes("Тестовый запуск"));
+
+  // 3b. Кириллица из UTF-8 и из cp1251 декодируется без потерь
+  assert.strictEqual(decodeOutput(Buffer.from("Привет", "utf8")), "Привет");
+  assert.strictEqual(decodeOutput(Buffer.from([0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2])), "Привет");
+
+  // 3c. ANSI-цвета превращаются в HTML без управляющих последовательностей
+  const ansi = ansiToHtml("\u001b[32mOK\u001b[0m и \u001b[31mFAIL\u001b[0m");
+  assert.ok(ansi.includes("OK") && ansi.includes("FAIL"));
+  assert.ok(!ansi.includes("\u001b["));
+
+  // 3d. В кадре видны код возврата и честная пометка об автоматической отрисовке
+  const htmlExit = generateCliTerminalHtml("py app.py", "вывод", { exitCode: 0 });
+  assert.ok(htmlExit.includes("код возврата: 0"));
+  assert.ok(htmlExit.includes("отрисован автоматически"));
 
   // 4. Интеграционный тест снятия скриншота с временного HTML-файла
   const tempHtml = path.join(os.tmpdir(), `test-capture-${Date.now()}.html`);

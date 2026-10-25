@@ -47,7 +47,25 @@ const path = require("path");
 const os = require("os");
 const { pathToFileURL } = require("url");
 
-const EDGE = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
+function resolveEdge() {
+  const candidates = [
+    process.env.EDGE_PATH,
+    process.env.CHROME_PATH,
+    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, "Microsoft", "Edge", "Application", "msedge.exe"),
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch (_) {
+      // следующий кандидат
+    }
+  }
+  return "msedge";
+}
+const EDGE = resolveEdge();
 const DEFAULT_PORT = 9222;
 const PROFILE_DIR = path.join(os.tmpdir(), "edge-cdp-profile");
 

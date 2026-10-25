@@ -31,10 +31,13 @@ import subprocess
 import sys
 import tempfile
 import uuid
-import zipfile
-from datetime import datetime, timezone
-from pathlib import Path
-
+import zipfile
+import zlib
+from datetime import datetime, timezone
+from pathlib import Path
+from xml.etree import ElementTree
+
+from docx_text import extract_docx_text
 from make_docx import build, load_context
 
 if sys.platform == "win32":
@@ -55,13 +58,34 @@ BUNDLED_TOOLS = {
     "shot": "shot.ps1",
     "docx_text": "docx_text.py",
 }
-CHECK_NAMES = ("content_references", "artifacts", "report_docx", "report_pdf", "text_docx")
+CHECK_NAMES = (
+    "content_references", "artifacts", "report_docx", "report_pdf", "text_docx",
+    "report_structure", "execution_evidence",
+)
+MIN_REPORT_SECTIONS = 3
+MIN_TEXT_NOTES_CHARS = 300
+RESULT_HEADINGS = {
+    "результат выполнения",
+    "результаты выполнения",
+    "результат работы",
+    "результаты работы",
+}
+PLACEHOLDER_MARKERS = (
+    "сформулируйте развернутый",
+    "сформулируйте развёрнутый",
+    "[вопрос",
+    "ответ: [",
+    "todo",
+    "tbd",
+    "fixme",
+    "заполните",
+)
 WINDOWS_ABSOLUTE = re.compile(r"^[A-Za-z]:[\\/]")
 COMMAND_ABSOLUTE_PATH = re.compile(r"(?:^|\s)(?:[A-Za-z]:[\\/]|/)")
 
 
-def fail(message):
-    raise SystemExit("_lab_state.json: " + message)
+def fail(message):
+    raise SystemExit(message)
 
 
 def load_state(root):
@@ -69,12 +93,12 @@ def load_state(root):
     try:
         with path.open(encoding="utf-8-sig") as stream:
             state = json.load(stream)
-    except FileNotFoundError:
-        fail("не найден: %s" % path)
-    except json.JSONDecodeError as exc:
-        fail("некорректный JSON в %s: %s" % (path, exc))
-    if not isinstance(state, dict) or not isinstance(state.get("labs"), dict):
-        fail("ожидается объект с полем labs")
+    except FileNotFoundError:
+        fail("не найден файл состояния: %s (создайте _lab_state.json)" % path)
+    except json.JSONDecodeError as exc:
+        fail("некорректный JSON в %s: %s" % (path, exc))
+    if not isinstance(state, dict) or not isinstance(state.get("labs"), dict):
+        fail("ожидается объект с полем labs в %s" % path)
     return state
 
 
@@ -411,24 +435,160 @@ def png_dimensions(path):
     return struct.unpack(">II", header[16:24])
 
 
-def check_screenshot(path):
-    """Perform a non-interactive, technical validation of report evidence."""
-    width, height = png_dimensions(path)
-    if width < 640 or height < 360:
-        fail("PNG-доказательство слишком мало (%dx%d, минимум 640x360): %s" %
-             (width, height, path))
-    print("SCREENSHOT OK %s (%dx%d)" % (path, width, height))
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
+
+
+def _unfilter_png_rows(raw, width, height, channels):
+    """Undo PNG scanline filters; return None for unsupported or damaged data."""
+    stride = width * channels
+    if len(raw) < height * (stride + 1):
+        return None
+    rows = []
+    previous = bytearray(stride)
+    offset = 0
+    for _ in range(height):
+        filter_type = raw[offset]
+        offset += 1
+        line = bytearray(raw[offset:offset + stride])
+        offset += stride
+        if filter_type == 1:
+            for index in range(channels, stride):
+                line[index] = (line[index] + line[index - channels]) & 0xFF
+        elif filter_type == 2:
+            for index in range(stride):
+                line[index] = (line[index] + previous[index]) & 0xFF
+        elif filter_type == 3:
+            for index in range(stride):
+                left = line[index - channels] if index >= channels else 0
+                line[index] = (line[index] + ((left + previous[index]) >> 1)) & 0xFF
+        elif filter_type == 4:
+            for index in range(stride):
+                left = line[index - channels] if index >= channels else 0
+                up = previous[index]
+                upper_left = previous[index - channels] if index >= channels else 0
+                estimate = left + up - upper_left
+                distance_left = abs(estimate - left)
+                distance_up = abs(estimate - up)
+                distance_upper_left = abs(estimate - upper_left)
+                if distance_left <= distance_up and distance_left <= distance_upper_left:
+                    line[index] = (line[index] + left) & 0xFF
+                elif distance_up <= distance_upper_left:
+                    line[index] = (line[index] + up) & 0xFF
+                else:
+                    line[index] = (line[index] + upper_left) & 0xFF
+        elif filter_type != 0:
+            return None
+        rows.append(line)
+        previous = line
+    return rows
+
+
+def png_visual_stats(path):
+    """Decode a plain 8-bit PNG and report how varied its pixels are.
+
+    Returns (width, height, distinct_colors, non_background_ratio) or None when
+    the PNG uses a layout this dependency-free decoder does not support.
+    """
+    data = Path(path).read_bytes()
+    if data[:8] != PNG_SIGNATURE:
+        return None
+    width = height = depth = color_type = interlace = None
+    palette = b""
+    compressed = bytearray()
+    position = 8
+    while position + 8 <= len(data):
+        length = struct.unpack(">I", data[position:position + 4])[0]
+        kind = data[position + 4:position + 8]
+        chunk = data[position + 8:position + 8 + length]
+        position += 12 + length
+        if kind == b"IHDR":
+            width, height, depth, color_type, _compression, _filter, interlace = struct.unpack(
+                ">IIBBBBB", chunk
+            )
+        elif kind == b"PLTE":
+            palette = chunk
+        elif kind == b"IDAT":
+            compressed.extend(chunk)
+        elif kind == b"IEND":
+            break
+    channels = PNG_CHANNELS.get(color_type)
+    if not channels or depth != 8 or interlace != 0 or not width or not height or not compressed:
+        return None
+    try:
+        raw = zlib.decompress(bytes(compressed))
+    except zlib.error:
+        return None
+    rows = _unfilter_png_rows(raw, width, height, channels)
+    if rows is None:
+        return None
+    row_step = max(1, height // 200)
+    column_step = max(1, width // 200)
+    colors = {}
+    for y in range(0, height, row_step):
+        line = rows[y]
+        for x in range(0, width, column_step):
+            index = x * channels
+            if color_type == 3:
+                entry = line[index]
+                if palette and entry * 3 + 2 < len(palette):
+                    color = (palette[entry * 3] >> 3, palette[entry * 3 + 1] >> 3, palette[entry * 3 + 2] >> 3)
+                else:
+                    color = (entry >> 3, entry >> 3, entry >> 3)
+            elif color_type in (0, 4):
+                value = line[index] >> 3
+                color = (value, value, value)
+            else:
+                color = (line[index] >> 3, line[index + 1] >> 3, line[index + 2] >> 3)
+            colors[color] = colors.get(color, 0) + 1
+    sampled = sum(colors.values())
+    if not sampled:
+        return None
+    dominant = max(colors.values())
+    return width, height, len(colors), 1.0 - dominant / sampled
+
+
+def check_screenshot(path):
+    """Validate PNG evidence: signature, minimum size and a non-blank frame."""
+    path = Path(path)
+    width, height = png_dimensions(path)
+    if width < 640 or height < 360:
+        fail("PNG-доказательство слишком мало (%dx%d, минимум 640x360): %s" %
+             (width, height, path))
+    stats = png_visual_stats(path)
+    if stats is None:
+        print("WARNING: PNG не удалось декодировать для проверки на пустоту: %s" % path)
+        return
+    _, _, colors, non_background = stats
+    if colors < 2 or non_background < 0.002:
+        fail("PNG-доказательство пустое: кадр одноцветный, содержимого нет: %s" % path)
+    print("SCREENSHOT OK %s (%dx%d, цветов %d, не фон %.1f%%)" %
+          (path, width, height, colors, non_background * 100))
 
 
-def execution_evidence_images(content_path):
-    """Return required evidence images, or no images when the report has no code."""
-    with content_path.open(encoding="utf-8-sig") as stream:
-        content = json.load(stream)
-    has_code = any(isinstance(item, dict) and "codefile" in item for item in content)
-    result_positions = [index for index, item in enumerate(content)
-                        if isinstance(item, dict) and item.get("h", "").casefold() == "результат выполнения"]
-    if not has_code or not result_positions:
-        return []
+def report_has_executable_content(content, lab):
+    """A report is executable when it ships code or declares a CLI demonstration."""
+    if any(isinstance(item, dict) and ("code" in item or "codefile" in item) for item in content):
+        return True
+    commands = lab.get("commands") if isinstance(lab, dict) else None
+    return (isinstance(commands, dict) and isinstance(commands.get("cli_evidence"), str)
+            and bool(commands["cli_evidence"].strip()))
+
+
+def execution_evidence_images(content_path, lab=None):
+    """Return evidence images required by code/CLI sections, or none for text-only reports."""
+    with content_path.open(encoding="utf-8-sig") as stream:
+        content = json.load(stream)
+    has_code = report_has_executable_content(content, lab or {})
+    result_positions = [
+        index for index, item in enumerate(content)
+        if isinstance(item, dict)
+        and str(item.get("h", "")).strip().casefold() in RESULT_HEADINGS
+    ]
+    if not has_code:
+        return []
+    if not result_positions:
+        fail("в отчёте есть код или cli_evidence, но нет раздела «Результат выполнения» со скриншотом")
     images = []
     for index in result_positions:
         following = content[index + 1] if index + 1 < len(content) else None
@@ -438,9 +598,9 @@ def execution_evidence_images(content_path):
     return images
 
 
-def verify_execution_evidence(content_path):
-    """Require a readable, sufficiently large PNG after a result section when code is reported."""
-    for image in execution_evidence_images(content_path):
+def verify_execution_evidence(content_path, lab):
+    """Require a valid, non-blank PNG after a result section when the report is executable."""
+    for image in execution_evidence_images(content_path, lab):
         if image.suffix.casefold() != ".png":
             fail("доказательство выполнения должно быть PNG: %s" % image)
         check_screenshot(image)
@@ -452,8 +612,8 @@ def check_report_screenshots(root, lab_number, lab):
     content_path, _, _ = paths_for(root, lab_number, lab)
     if not content_path.is_file():
         fail("не найден content: %s" % content_path)
-    images = execution_evidence_images(content_path)
-    if not images:
+    images = execution_evidence_images(content_path, lab)
+    if not images:
         print("SCREENSHOT CHECK: no executable evidence required")
         return
     for image in images:
@@ -462,16 +622,22 @@ def check_report_screenshots(root, lab_number, lab):
         check_screenshot(image)
 
 
-def capture_cli_evidence(root, lab_number, lab):
-    """Capture CLI evidence through the bundled headless CDP terminal renderer."""
-    commands = lab.get("commands")
-    if not isinstance(commands, dict) or not isinstance(commands.get("cli_evidence"), str):
-        fail("для capture-cli укажите labs.%d.commands.cli_evidence" % lab_number)
-    content_path, _, _ = paths_for(root, lab_number, lab)
-    images = execution_evidence_images(content_path)
-    if len(images) != 1:
-        fail("capture-cli требует ровно один img сразу после «Результат выполнения»")
-    image = images[0]
+def capture_cli_evidence(root, lab_number, lab, out_path=None):
+    """Capture CLI evidence through the bundled headless renderer."""
+    commands = lab.get("commands")
+    if not isinstance(commands, dict) or not isinstance(commands.get("cli_evidence"), str):
+        fail("для capture-cli укажите labs.%d.commands.cli_evidence" % lab_number)
+    content_path, _, _ = paths_for(root, lab_number, lab)
+    images = execution_evidence_images(content_path, lab)
+    if out_path:
+        image = resolve(root, out_path)
+        declared = {item.resolve() for item in images}
+        if declared and image.resolve() not in declared:
+            fail("capture-cli: --out %s не указан среди img в content.json" % out_path)
+    elif len(images) == 1:
+        image = images[0]
+    else:
+        fail("capture-cli: в отчёте %d разделов «Результат выполнения»; укажите --out для нужного PNG" % len(images))
     if image.suffix.casefold() != ".png":
         fail("img доказательства должен быть PNG: %s" % image)
     image.parent.mkdir(parents=True, exist_ok=True)
@@ -493,8 +659,8 @@ def verify_report(root, lab_number, lab):
     content_path, report_path, _ = paths_for(root, lab_number, lab)
     if not content_path.is_file():
         fail("не найден content: %s" % content_path)
-    verify_content_references(content_path)
-    verify_execution_evidence(content_path)
+    verify_content_references(content_path)
+    verify_execution_evidence(content_path, lab)
     artifacts = lab.get("artifacts", [str(report_path.relative_to(root))])
     if not isinstance(artifacts, list) or not artifacts:
         fail("labs.%d.artifacts должен быть непустым списком; добавляйте артефакты по мере создания" % lab_number)
@@ -531,11 +697,100 @@ def verify_docx(path, label):
     print("DOCX %s" % path)
 
 
-def verify_pdf(path):
-    required_file(None, path, "PDF-отчёт")
-    if path.read_bytes()[:4] != b"%PDF":
-        fail("PDF-отчёт не начинается с сигнатуры %%PDF: %s" % path)
-    print("PDF %s" % path)
+def verify_pdf(path):
+    required_file(None, path, "PDF-отчёт")
+    if path.read_bytes()[:4] != b"%PDF":
+        fail("PDF-отчёт не начинается с сигнатуры %%PDF: %s" % path)
+    print("PDF %s" % path)
+
+
+def docx_element_count(path, local_name):
+    """Count elements such as w:drawing or w:tbl inside the DOCX body."""
+    namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    with zipfile.ZipFile(path) as archive:
+        root = ElementTree.fromstring(archive.read("word/document.xml"))
+    body = root.find(namespace + "body")
+    if body is None:
+        return 0
+    return len(body.findall(".//" + namespace + local_name))
+
+
+def pdf_page_count(path):
+    """Return the page count through PyMuPDF, or None when the library is absent."""
+    try:
+        import pymupdf as fitz
+    except ImportError:
+        try:
+            import fitz
+        except ImportError:
+            return None
+    try:
+        with fitz.open(str(path)) as document:
+            return len(document)
+    except Exception as error:  # noqa: BLE001 - any parser failure means a broken PDF
+        fail("PDF не читается PyMuPDF: %s" % error)
+
+
+def collapsed_text(value):
+    return re.sub(r"\s+", "", value)
+
+
+def verify_report_structure(root, lab_number, lab):
+    """Check report substance: sections, figures, tables, notes and PDF pages.
+
+    Returns warnings for checks that this environment could not perform.
+    """
+    warnings = []
+    content_path, report_path, _ = paths_for(root, lab_number, lab)
+    _, text_path = text_paths_for(root, lab_number, lab)
+    pdf_path = pdf_path_for(root, lab_number, lab)
+    try:
+        with content_path.open(encoding="utf-8-sig") as stream:
+            content = json.load(stream)
+    except json.JSONDecodeError as exc:
+        fail("некорректный JSON в content: %s" % exc)
+    headings = [item["h"] for item in content
+                if isinstance(item, dict) and isinstance(item.get("h"), str)]
+    paragraphs = [item["p"] for item in content
+                  if isinstance(item, dict) and isinstance(item.get("p"), str)]
+    if len(headings) < MIN_REPORT_SECTIONS:
+        fail("в отчёте %d раздел(ов); нужно минимум %d содержательных раздела "
+             "(цель, задание, ход работы, результат)" % (len(headings), MIN_REPORT_SECTIONS))
+    if len(paragraphs) < 2:
+        fail("в отчёте меньше двух абзацев текста: отчёт не может состоять только из заголовков")
+    report_text = extract_docx_text(report_path)
+    position = 0
+    for heading in headings:
+        index = report_text.find(heading, position)
+        if index < 0:
+            fail("раздел «%s» не найден в DOCX или нарушен порядок разделов" % heading)
+        position = index
+    images = sum(1 for item in content if isinstance(item, dict) and "img" in item)
+    drawings = docx_element_count(report_path, "drawing")
+    if drawings != images:
+        fail("в DOCX %d рисунков, а в content.json — %d; проверьте ссылки img" %
+             (drawings, images))
+    tables = sum(1 for item in content if isinstance(item, dict) and "table" in item)
+    docx_tables = docx_element_count(report_path, "tbl")
+    if docx_tables != tables:
+        fail("в DOCX %d таблиц, а в content.json — %d" % (docx_tables, tables))
+    notes = extract_docx_text(text_path)
+    collapsed_notes = collapsed_text(notes)
+    if len(collapsed_notes) < MIN_TEXT_NOTES_CHARS:
+        fail("text.docx слишком короткий для конспекта защиты (%d символов без пробелов, "
+             "нужно минимум %d)" % (len(collapsed_notes), MIN_TEXT_NOTES_CHARS))
+    lowered_notes = notes.casefold()
+    for marker in PLACEHOLDER_MARKERS:
+        if marker in lowered_notes:
+            fail("в text.docx остались заглушки конспекта: «%s»" % marker)
+    pages = pdf_page_count(pdf_path)
+    if pages is None:
+        warnings.append("PyMuPDF недоступен: число страниц PDF не проверено")
+    elif pages < 2:
+        fail("PDF содержит %d страницу: собран только титульный лист" % pages)
+    print("STRUCTURE OK: разделов %d, рисунков %d, таблиц %d, страниц PDF %s" %
+          (len(headings), images, tables, pages if pages is not None else "?"))
+    return warnings
 
 
 def relative_to_root(root, path):
@@ -563,16 +818,17 @@ def quality_hashes(root, lab_number, lab, report_path, pdf_path, text_path):
     existing = [path for path in set(candidates) if path.is_file()]
     return {relative_to_root(root, path): sha256_file(path) for path in sorted(existing)}
 
-def write_quality_record(root, lab_number, lab, report_path, pdf_path, text_path):
+def write_quality_record(root, lab_number, lab, report_path, pdf_path, text_path, warnings=None):
     lab_dir = lab_directory(root, lab_number, lab)
     lab_dir.mkdir(parents=True, exist_ok=True)
-    record = {
-        "schema_version": 2,
-        "lab": lab_number,
-        "report_number": report_number_for(lab_number, lab),
-        "status": "passed",
-        "checked_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-        "checks": list(CHECK_NAMES),
+    record = {
+        "schema_version": 3,
+        "lab": lab_number,
+        "report_number": report_number_for(lab_number, lab),
+        "status": "passed",
+        "checked_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "checks": list(CHECK_NAMES),
+        "warnings": list(warnings or []),
         "files": [
             relative_to_root(root, report_path),
             relative_to_root(root, pdf_path),
@@ -608,7 +864,7 @@ def write_quality_record(root, lab_number, lab, report_path, pdf_path, text_path
                     "status": "passed",
                     "checked_at": record["checked_at"],
                     "checks": list(CHECK_NAMES),
-                    "warnings": [],
+                    "warnings": list(record["warnings"]),
                 }
                 with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=root, delete=False,
                                                  prefix="._lab_state-", suffix=".tmp") as stream:
@@ -637,6 +893,8 @@ def verify_quality_record(root, lab_number, lab):
             record = json.load(stream)
     except json.JSONDecodeError as exc:
         fail("quality gate record has invalid JSON: %s" % exc)
+    if isinstance(record, dict) and record.get("status") != "passed":
+        fail("quality gate record is not a passed gate")
     actual = record.get("sha256") if isinstance(record, dict) else None
     expected = quality_hashes(root, lab_number, lab, report_path, pdf_path, text_path)
     if not isinstance(actual, dict):
@@ -645,16 +903,17 @@ def verify_quality_record(root, lab_number, lab):
         fail("quality gate record is stale; tracked files changed after the last quality-gate")
     print("QUALITY RECORD CURRENT: lab %d" % lab_number)
 
-def quality_gate(root, lab_number, lab):
-    """Check report inputs and mandatory documents; then record a successful gate."""
-    verify_report(root, lab_number, lab)
-    _, report_path, _ = paths_for(root, lab_number, lab)
-    pdf_path = pdf_path_for(root, lab_number, lab)
-    _, text_path = text_paths_for(root, lab_number, lab)
-    verify_docx(report_path, "DOCX-отчёт")
-    verify_pdf(pdf_path)
-    verify_docx(text_path, "конспект text.docx")
-    write_quality_record(root, lab_number, lab, report_path, pdf_path, text_path)
+def quality_gate(root, lab_number, lab):
+    """Check report inputs, substance and documents; then record a successful gate."""
+    verify_report(root, lab_number, lab)
+    _, report_path, _ = paths_for(root, lab_number, lab)
+    pdf_path = pdf_path_for(root, lab_number, lab)
+    _, text_path = text_paths_for(root, lab_number, lab)
+    verify_docx(report_path, "DOCX-отчёт")
+    verify_pdf(pdf_path)
+    verify_docx(text_path, "конспект text.docx")
+    warnings = verify_report_structure(root, lab_number, lab)
+    write_quality_record(root, lab_number, lab, report_path, pdf_path, text_path, warnings)
     print("QUALITY GATE PASSED: lab %d" % lab_number)
 
 
@@ -666,11 +925,14 @@ def extract_guide_text(guide_path):
         return extract_docx_text(guide_path)
     elif ext == ".pdf":
         try:
-            import fitz
-            with fitz.open(guide_path) as doc:
-                return "\n".join(page.get_text() for page in doc)
+            import pymupdf as fitz
         except ImportError:
-            fail("для чтения PDF-методички требуется библиотека PyMuPDF (fitz)")
+            try:
+                import fitz
+            except ImportError:
+                fail("для чтения PDF-методички требуется библиотека PyMuPDF (pymupdf)")
+        with fitz.open(guide_path) as doc:
+            return "\n".join(page.get_text() for page in doc)
     else:
         try:
             return guide_path.read_text(encoding="utf-8")
@@ -787,7 +1049,7 @@ def main():
             "check-screenshot", "capture-cli", "read-guide", "init-text",
         ),
     )
-    parser.add_argument("--out", help="файл для сохранения вывода (например, для read-guide)")
+    parser.add_argument("--out", help="файл вывода read-guide или PNG для capture-cli")
     args = parser.parse_args()
     root = Path(args.root).resolve()
     state = load_state(root)
@@ -810,8 +1072,8 @@ def main():
         verify_quality_record(root, args.lab, lab)
     elif args.action == "check-screenshot":
         check_report_screenshots(root, args.lab, lab)
-    elif args.action == "capture-cli":
-        capture_cli_evidence(root, args.lab, lab)
+    elif args.action == "capture-cli":
+        capture_cli_evidence(root, args.lab, lab, args.out)
     elif args.action == "read-guide":
         read_guide(root, args.lab, lab, args.out)
     elif args.action == "init-text":
