@@ -3,6 +3,7 @@ import struct
 import sys
 import tempfile
 import unittest
+import zipfile
 import zlib
 from pathlib import Path
 
@@ -76,6 +77,49 @@ class CaptionNumberingTest(unittest.TestCase):
         write_png(self.root / "one.png")
         text = self.build([{"img": "one.png", "caption": "   "}])
         self.assertNotIn("Рисунок", text)
+
+
+class TableSpanTest(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tempdir.name)
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def build(self, table):
+        output = self.root / "doc.docx"
+        make_docx.build(str(output), 1, "Topic", [{"table": table}], str(self.root), None, title=False)
+        with zipfile.ZipFile(output) as archive:
+            return archive.read("word/document.xml").decode("utf-8")
+
+    def test_colspan_widens_grid(self):
+        xml = self.build({"rows": [[{"text": "Header", "colspan": 2}], ["A", "B"]]})
+        self.assertIn('w:gridSpan w:val="2"', xml)
+        self.assertEqual(xml.count("<w:gridCol "), 2)
+
+    def test_rowspan_emits_continuation_cell(self):
+        xml = self.build({"rows": [[{"text": "A", "rowspan": 2}, "B"], ["C"]]})
+        self.assertIn('w:vMerge w:val="restart"', xml)
+        self.assertIn("<w:vMerge/>", xml)
+
+    def test_combined_spans_fill_three_columns(self):
+        xml = self.build({"rows": [[{"text": "X", "colspan": 2, "rowspan": 2}, "Y"], ["Z"]]})
+        self.assertEqual(xml.count("<w:gridCol "), 3)
+        self.assertIn('w:gridSpan w:val="2"', xml)
+        self.assertIn('w:vMerge w:val="restart"', xml)
+
+    def test_rowspan_out_of_bounds_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "rowspan"):
+            self.build({"rows": [[{"text": "A", "rowspan": 3}]]})
+
+    def test_widths_must_match_grid(self):
+        with self.assertRaisesRegex(ValueError, "widths"):
+            self.build({"rows": [[{"text": "A", "colspan": 2}]], "widths": [1000]})
+
+    def test_row_must_fill_the_grid(self):
+        with self.assertRaisesRegex(ValueError, "не заполняет"):
+            self.build({"rows": [["A"], []]})
 
 
 if __name__ == "__main__":

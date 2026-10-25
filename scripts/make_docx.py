@@ -46,7 +46,9 @@ content.json — список элементов:
                                                   если подпись не начинается с «Рисунок N»
     {"table": {"rows": [[...]], "widths": [dxa...], "header": true, "caption": "..."}}
                                                — таблица 12 pt; подпись «Таблица N — ...»
-                                                  помещается над таблицей
+                                                  помещается над таблицей. Ячейка — строка
+                                                  или {"text": "...", "colspan": 2, "rowspan": 2};
+                                                  widths задаются по колонкам сетки
     {"pb": true}                               — разрыв страницы
 Относительные пути в content.json разрешаются от каталога самого content.json.
 """
@@ -242,21 +244,84 @@ def image_xml(png_path, rid, img_id):
     return drawing, data
 
 
+def _normalize_table_cells(row, row_number):
+    """Turn a row of strings/dicts into cell descriptors with span defaults."""
+    cells = []
+    for value in row:
+        if isinstance(value, dict):
+            text_value = value.get("text", "")
+            colspan = value.get("colspan", 1)
+            rowspan = value.get("rowspan", 1)
+        else:
+            text_value = value
+            colspan = rowspan = 1
+        if not isinstance(colspan, int) or isinstance(colspan, bool) or colspan < 1:
+            raise ValueError("table: colspan должен быть целым числом >= 1 (строка %d)" % row_number)
+        if not isinstance(rowspan, int) or isinstance(rowspan, bool) or rowspan < 1:
+            raise ValueError("table: rowspan должен быть целым числом >= 1 (строка %d)" % row_number)
+        cells.append({"text": text_value, "colspan": colspan, "rowspan": rowspan})
+    return cells
+
+
+def _layout_table(rows):
+    """Place cells on a grid, honouring colspan/rowspan.
+
+    Returns (grid_width, starts, occupied), where starts[row][column] is the
+    cell that begins there and occupied[row][column] marks every covered slot
+    (including vertical-merge continuations).
+    """
+    height = len(rows)
+    occupied = [dict() for _ in range(height)]
+    starts = [dict() for _ in range(height)]
+    width = 0
+    for row_index, row in enumerate(rows):
+        column = 0
+        for cell in row:
+            while occupied[row_index].get(column):
+                column += 1
+            if cell["rowspan"] > height - row_index:
+                raise ValueError("table: rowspan выходит за пределы таблицы (строка %d)" % (row_index + 1))
+            for offset_row in range(cell["rowspan"]):
+                for offset_column in range(cell["colspan"]):
+                    target_column = column + offset_column
+                    if occupied[row_index + offset_row].get(target_column):
+                        raise ValueError(
+                            "table: объединённые ячейки пересекаются (строка %d)" % (row_index + 1)
+                        )
+                    occupied[row_index + offset_row][target_column] = True
+            starts[row_index][column] = cell
+            column += cell["colspan"]
+            width = max(width, column)
+    for row_index in range(height):
+        for column in range(width):
+            if not occupied[row_index].get(column):
+                raise ValueError(
+                    "table: строка %d не заполняет всю ширину таблицы (проверьте colspan/rowspan)"
+                    % (row_index + 1)
+                )
+    return width, starts, occupied
+
+
 def table_xml(spec):
-    """Возвращает OOXML-таблицу из {rows, widths?, header?}."""
-    rows = spec.get("rows")
-    if not isinstance(rows, list) or not rows or not all(isinstance(row, list) and row for row in rows):
-        raise ValueError("table.rows должен быть непустым списком непустых строк")
-    columns = len(rows[0])
-    if any(len(row) != columns for row in rows):
-        raise ValueError("все строки table.rows должны иметь одинаковое число ячеек")
+    """Return OOXML for {rows, widths?, header?, caption?} with cell spans.
+
+    A cell is either a string or {"text": ..., "colspan": N, "rowspan": M}.
+    """
+    rows_spec = spec.get("rows")
+    if not isinstance(rows_spec, list) or not rows_spec or not all(isinstance(row, list) for row in rows_spec):
+        raise ValueError("table.rows должен быть непустым списком строк")
+    if not any(rows_spec):
+        raise ValueError("table.rows не может состоять только из пустых строк")
+    rows = [_normalize_table_cells(row, index + 1) for index, row in enumerate(rows_spec)]
+    width, starts, _occupied = _layout_table(rows)
+
     widths = spec.get("widths")
     if widths is None:
-        widths = [TABLE_WIDTH // columns] * columns
+        widths = [TABLE_WIDTH // width] * width
         widths[-1] += TABLE_WIDTH - sum(widths)
-    if (not isinstance(widths, list) or len(widths) != columns or
-            any(not isinstance(width, int) or width <= 0 for width in widths)):
-        raise ValueError("table.widths должен содержать положительную ширину для каждой колонки")
+    if (not isinstance(widths, list) or len(widths) != width or
+            any(not isinstance(value, int) or isinstance(value, bool) or value <= 0 for value in widths)):
+        raise ValueError("table.widths должен содержать положительную ширину для каждой из %d колонок" % width)
     if sum(widths) > TABLE_WIDTH:
         raise ValueError("сумма table.widths не должна превышать %d dxa" % TABLE_WIDTH)
     header = spec.get("header", True)
@@ -269,19 +334,38 @@ def table_xml(spec):
     out = ['<w:tbl><w:tblPr><w:tblW w:w="%d" w:type="dxa"/>%s</w:tblPr>' %
            (sum(widths), borders)]
     out.append('<w:tblGrid>%s</w:tblGrid>' % ''.join(
-        '<w:gridCol w:w="%d"/>' % width for width in widths))
-    for row_index, row in enumerate(rows):
+        '<w:gridCol w:w="%d"/>' % value for value in widths))
+    for row_index in range(len(rows)):
         cells = []
-        for width, value in zip(widths, row):
+        column = 0
+        while column < width:
+            cell = starts[row_index].get(column)
+            if cell is None:
+                cells.append(
+                    '<w:tc><w:tcPr><w:tcW w:w="%d" w:type="dxa"/><w:vMerge/></w:tcPr><w:p/></w:tc>'
+                    % widths[column]
+                )
+                column += 1
+                continue
+            properties = ['<w:tcW w:w="%d" w:type="dxa"/>'
+                          % sum(widths[column:column + cell["colspan"]])]
+            if cell["colspan"] > 1:
+                properties.append('<w:gridSpan w:val="%d"/>' % cell["colspan"])
+            if cell["rowspan"] > 1:
+                properties.append('<w:vMerge w:val="restart"/>')
+            if header and row_index == 0:
+                properties.append('<w:shd w:val="clear" w:fill="D9EAD3"/>')
             paragraphs = []
-            for line in str(value).split("\n"):
-                paragraphs.append(para(run(line if line else " ", sz=24, b=bool(header and row_index == 0)),
-                                       jc="left", first_line=None, spacing_before=40, spacing_after=40, line=240))
-            shade = '<w:shd w:val="clear" w:fill="D9EAD3"/>' if header and row_index == 0 else ''
-            cells.append('<w:tc><w:tcPr><w:tcW w:w="%d" w:type="dxa"/>%s</w:tcPr>%s</w:tc>' %
-                         (width, shade, ''.join(paragraphs)))
+            for line in str(cell["text"]).split("\n"):
+                paragraphs.append(para(
+                    run(line if line else " ", sz=24, b=bool(header and row_index == 0)),
+                    jc="left", first_line=None, spacing_before=40, spacing_after=40, line=240,
+                ))
+            cells.append('<w:tc><w:tcPr>%s</w:tcPr>%s</w:tc>' % ("".join(properties), "".join(paragraphs)))
+            column += cell["colspan"]
         out.append('<w:tr><w:trPr><w:cantSplit/></w:trPr>%s</w:tr>' % ''.join(cells))
     return ''.join(out) + '</w:tbl>'
+
 
 CONTENT_TYPES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
