@@ -25,6 +25,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -83,6 +84,20 @@ def collect(root: Path, skip_dev: bool = False) -> dict[str, str]:
     return digests
 
 
+def _replace_with_retries(source: Path, target: Path, attempts: int = 4) -> None:
+    """Rename a path, retrying transient Windows locks (antivirus, indexer)."""
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError as error:
+            last_error = error
+            if attempt < attempts:
+                time.sleep(0.25 * attempt)
+    raise last_error
+
+
 def _backup_path(target: Path) -> Path:
     stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
     candidate = target.parent / ("%s.backup-%s" % (target.name, stamp))
@@ -133,20 +148,20 @@ def install(source: Path, target: Path, make_backup: bool = True) -> str:
         if target.exists():
             if make_backup:
                 backup = _backup_path(target)
-                os.replace(target, backup)
+                _replace_with_retries(target, backup)
             else:
                 shutil.rmtree(target)
-        os.replace(staging, target)
+        _replace_with_retries(staging, target)
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         if backup is not None and backup.exists() and not target.exists():
-            os.replace(backup, target)
+            _replace_with_retries(backup, target)
         raise
 
     if collect(target, skip_dev=True) != expected:
         shutil.rmtree(target, ignore_errors=True)
         if backup is not None and backup.exists():
-            os.replace(backup, target)
+            _replace_with_retries(backup, target)
         raise SystemExit("установка не прошла проверку по SHA-256: %s" % target)
     return "installed" if backup is None else "installed (backup: %s)" % backup.name
 

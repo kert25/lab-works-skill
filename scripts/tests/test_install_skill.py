@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
@@ -80,6 +81,25 @@ class InstallSkillTest(unittest.TestCase):
         (cache / "tool.pyc").write_bytes(b"cache")
         self.assertEqual(install_skill.check(self.source, self.target)[0], "ok")
         self.assertEqual(install_skill.install(self.source, self.target), "up to date")
+
+    def test_replace_retries_transient_lock(self):
+        source = self.root / "source.txt"
+        source.write_text("payload", encoding="utf-8")
+        destination = self.root / "destination.txt"
+        attempts = {"count": 0}
+        real_replace = install_skill.os.replace
+
+        def flaky_replace(src, dst):
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise PermissionError("locked by antivirus")
+            real_replace(src, dst)
+
+        with patch.object(install_skill.os, "replace", side_effect=flaky_replace):
+            install_skill._replace_with_retries(source, destination)
+
+        self.assertEqual(attempts["count"], 2)
+        self.assertEqual(destination.read_text(encoding="utf-8"), "payload")
 
     def test_missing_target_is_reported(self):
         status, problems = install_skill.check(self.source, self.root / "absent")
