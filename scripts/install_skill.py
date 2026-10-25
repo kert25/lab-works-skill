@@ -33,6 +33,7 @@ from pathlib import Path
 SOURCE = Path(__file__).resolve().parents[1]
 SKIP_DIRECTORIES = {".git", "__pycache__", ".pytest_cache"}
 SKIP_PATHS = {
+    ".github",
     ".skill-eval/workspace",
     ".skill-eval/skill-creator",
     ".skill-eval/anthropic-skills",

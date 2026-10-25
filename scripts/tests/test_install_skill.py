@@ -27,6 +27,8 @@ class InstallSkillTest(unittest.TestCase):
         (self.source / ".skill-eval" / "workspace").mkdir(parents=True)
         (self.source / ".skill-eval" / "workspace" / "run.txt").write_text("run", encoding="utf-8")
         (self.source / "UPGRADE.md").write_text("roadmap", encoding="utf-8")
+        (self.source / ".github" / "workflows").mkdir(parents=True)
+        (self.source / ".github" / "workflows" / "ci.yml").write_text("name: CI", encoding="utf-8")
         self.target = self.root / "installed" / "lab-works"
         self.target.parent.mkdir()
 
@@ -40,6 +42,7 @@ class InstallSkillTest(unittest.TestCase):
         self.assertIn("SKILL.md", files)
         self.assertIn("scripts/tool.py", files)
         self.assertNotIn("UPGRADE.md", files)
+        self.assertFalse(any(".github" in name for name in files))
         self.assertNotIn(".git/config", files)
         self.assertFalse(any("__pycache__" in name for name in files))
         self.assertFalse(any(".skill-eval/workspace" in name for name in files))
