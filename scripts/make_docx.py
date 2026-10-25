@@ -41,12 +41,16 @@ content.json — список элементов:
     {"p":  "текст"}                            — обычный абзац Times New Roman 14 pt, по ширине, отступ 1,25 см, 1.5 интервал
     {"code": "текст программы"}                — листинг Courier New 10 pt, одинарный интервал, без отступа
     {"codefile": "путь/к/файлу"}               — листинг из файла (UTF-8)
-    {"img": "путь.png", "caption": "Подпись"}  — рисунок по центру + подпись 12 pt («Рисунок N — ...»)
-    {"table": {"rows": [[...]], "widths": [dxa...], "header": true}} — таблица 12 pt
+    {"img": "путь.png", "caption": "Подпись"}  — рисунок по центру + подпись 12 pt;
+                                                  номер «Рисунок N — ...» ставится автоматически,
+                                                  если подпись не начинается с «Рисунок N»
+    {"table": {"rows": [[...]], "widths": [dxa...], "header": true, "caption": "..."}}
+                                               — таблица 12 pt; подпись «Таблица N — ...»
+                                                  помещается над таблицей
     {"pb": true}                               — разрыв страницы
 Относительные пути в content.json разрешаются от каталога самого content.json.
 """
-import sys, os, json, struct, zipfile, argparse
+import sys, os, json, re, struct, zipfile, argparse
 
 if sys.platform == "win32":
     if hasattr(sys.stdout, "reconfigure"):
@@ -333,6 +337,18 @@ def validate_content(content, num, theme, title):
     if content[0].get("h") == automatic_title and content[1].get("h") in (theme, automatic_theme):
         raise ValueError("content starts with a duplicate automatic report header; start with a substantive section")
 
+FIGURE_CAPTION = re.compile(r"^\s*(рисунок|рис\.)\s*\d+", re.IGNORECASE)
+TABLE_CAPTION = re.compile(r"^\s*таблица\s*\d+", re.IGNORECASE)
+
+
+def numbered_caption(text, label, number, pattern):
+    """Prefix a caption with its number unless the text is already numbered."""
+    value = str(text).strip()
+    if not value or pattern.match(value):
+        return value
+    return "%s %d — %s" % (label, number, value)
+
+
 def build(out, num, theme, content, workdir, ctx=None, title=True):
     validate_content(content, num, theme, title)
     def resolve(p):
@@ -348,6 +364,8 @@ def build(out, num, theme, content, workdir, ctx=None, title=True):
         paras.append(para(run(" ", sz=28), first_line=None, spacing_before=0, spacing_after=0, line=240))
     media, img_rels = {}, []
     rid_n = 100
+    figure_number = 0
+    table_number = 0
     for item in content:
         if "h" in item:
             paras.append(heading(item["h"]))
@@ -359,14 +377,23 @@ def build(out, num, theme, content, workdir, ctx=None, title=True):
         elif "code" in item:
             paras.append(code_block(item["code"]))
         elif "table" in item:
-            paras.append(table_xml(item["table"]))
+            spec = item["table"]
+            table_number += 1
+            caption = spec.get("caption") if isinstance(spec, dict) else None
+            if caption:
+                table_caption = numbered_caption(caption, "Таблица", table_number, TABLE_CAPTION)
+                paras.append(para(run(table_caption, sz=24), jc="left", first_line=None,
+                                  spacing_before=120, spacing_after=60, line=240))
+            paras.append(table_xml(spec))
         elif "img" in item:
+            figure_number += 1
             rid = "rIdImg%d" % rid_n
             drawing, data = image_xml(resolve(item["img"]), rid, rid_n)
             paras.append(para(drawing, jc="center", first_line=None,
                               spacing_before=120, spacing_after=60, line=240))
             if item.get("caption"):
-                paras.append(para(run(item["caption"], sz=24), jc="center", first_line=None,
+                figure_caption = numbered_caption(item["caption"], "Рисунок", figure_number, FIGURE_CAPTION)
+                paras.append(para(run(figure_caption, sz=24), jc="center", first_line=None,
                                   spacing_before=60, spacing_after=120, line=240))
             media["word/media/image%d.png" % rid_n] = data
             img_rels.append('<Relationship Id="%s" Type="http://schemas.openxmlformats.org'

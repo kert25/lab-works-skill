@@ -8,6 +8,11 @@ param(
 $docxPath = (Resolve-Path -LiteralPath $Docx).Path
 $pdfPath = [System.IO.Path]::GetFullPath($Pdf)
 
+# Word — single-instance COM server: если он уже запущен, New-Object может
+# подключиться к пользовательскому экземпляру. В этом случае Quit() закрыл бы
+# чужие документы, поэтому закрываем Word только если запускали его сами.
+$wordWasRunning = [bool](Get-Process -Name WINWORD -ErrorAction SilentlyContinue)
+
 $word = New-Object -ComObject Word.Application
 $word.Visible = $false
 $word.DisplayAlerts = 0
@@ -19,6 +24,6 @@ try {
     Write-Output "OK $pdfPath ($([math]::Round((Get-Item -LiteralPath $pdfPath).Length / 1KB)) KB)"
 }
 finally {
-    $word.Quit()
+    if (-not $wordWasRunning) { $word.Quit() }
     [void][System.Runtime.Interopservices.Marshal]::ReleaseComObject($word)
 }

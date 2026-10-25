@@ -120,11 +120,14 @@ def local_skill_validation() -> list[str]:
         errors.append("SKILL.md frontmatter name must equal 'lab-works'")
     if not description or not description.group(1).strip():
         errors.append("SKILL.md frontmatter requires a non-empty description")
-    if len(content.splitlines()) > 750:
-        errors.append("SKILL.md exceeds the local 750-line review threshold; split stable detail into references")
+    if len(content.splitlines()) > 320:
+        errors.append("SKILL.md exceeds the 320-line workflow threshold; move stable detail into references/")
     for script_name in re.findall(r"`(?:scripts/)?([A-Za-z0-9_.-]+\.(?:py|js|ps1))`", content):
         if not (ROOT / "scripts" / script_name).is_file():
             errors.append(f"SKILL.md references missing scripts/{script_name}")
+    for reference in sorted(set(re.findall(r"`(references/[A-Za-z0-9_.-]+\.md)`", content))):
+        if not (ROOT / reference).is_file():
+            errors.append(f"SKILL.md references missing {reference}")
     return errors
 
 
