@@ -164,5 +164,40 @@ class FormulaTest(unittest.TestCase):
                 self.build([{"formula": value}])
 
 
+class CodeStyleTest(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tempdir.name)
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def build(self, content):
+        output = self.root / "doc.docx"
+        make_docx.build(str(output), 1, "Topic", content, str(self.root), None, title=False)
+        with zipfile.ZipFile(output) as archive:
+            return archive.read("word/document.xml").decode("utf-8")
+
+    def test_shaded_code_has_fill_border_and_indent(self):
+        xml = self.build([{"code": "print(1)\nprint(2)", "shaded": True}])
+        self.assertIn('w:fill="F2F2F2"', xml)
+        self.assertIn("<w:pBdr>", xml)
+        self.assertEqual(xml.count("<w:top "), 1)
+        self.assertEqual(xml.count("<w:bottom "), 1)
+        self.assertEqual(xml.count("<w:left "), 2)
+        self.assertIn('<w:ind w:left="120"', xml)
+
+    def test_plain_code_has_no_fill_or_border(self):
+        xml = self.build([{"code": "print(1)"}])
+        self.assertNotIn("F2F2F2", xml)
+        self.assertNotIn("<w:pBdr>", xml)
+
+    def test_shaded_codefile_is_supported(self):
+        (self.root / "app.py").write_text("print('ok')\n", encoding="utf-8")
+        xml = self.build([{"codefile": "app.py", "shaded": True}])
+        self.assertIn('w:fill="F2F2F2"', xml)
+        self.assertIn("print('ok')", xml)
+
+
 if __name__ == "__main__":
     unittest.main()

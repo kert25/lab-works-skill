@@ -41,6 +41,9 @@ content.json — список элементов:
     {"p":  "текст"}                            — обычный абзац Times New Roman 14 pt, по ширине, отступ 1,25 см, 1.5 интервал
     {"code": "текст программы"}                — листинг Courier New 10 pt, одинарный интервал, без отступа
     {"codefile": "путь/к/файлу"}               — листинг из файла (UTF-8)
+    "shaded": true                             — необязательный флаг для code/codefile:
+                                                 серая подложка, акцентная левая граница
+                                                 и рамка сверху/снизу
     {"img": "путь.png", "caption": "Подпись"}  — рисунок по центру + подпись 12 pt;
                                                   номер «Рисунок N — ...» ставится автоматически,
                                                   если подпись не начинается с «Рисунок N»
@@ -209,18 +212,41 @@ def body_para(text):
         for line in lines
     )
 
-def code_block(code):
+def _code_line(text, shaded, first, last):
+    """One listing line; optional grey fill, accent border and a frame."""
+    # pPr children follow the OOXML order: pBdr, shd, spacing, ind, jc.
+    ppr = []
+    if shaded:
+        borders = []
+        if first:
+            borders.append('<w:top w:val="single" w:sz="6" w:space="4" w:color="A0A0A0"/>')
+        borders.append('<w:left w:val="single" w:sz="12" w:space="4" w:color="A0A0A0"/>')
+        if last:
+            borders.append('<w:bottom w:val="single" w:sz="6" w:space="4" w:color="A0A0A0"/>')
+        ppr.append('<w:pBdr>%s</w:pBdr>' % "".join(borders))
+        ppr.append('<w:shd w:val="clear" w:color="auto" w:fill="F2F2F2"/>')
+    ppr.append('<w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/>')
+    if shaded:
+        ppr.append('<w:ind w:left="120" w:right="120"/>')
+    ppr.append('<w:jc w:val="left"/>')
+    return '<w:p><w:pPr>%s</w:pPr>%s</w:p>' % (
+        "".join(ppr), run(text if text else " ", font=COURIER, sz=20))
+
+
+def code_block(code, shaded=False):
     """Листинг программы:
     - моноширинный шрифт Courier New 10 pt (sz=20)
     - одинарный межстрочный интервал (line=240)
     - выравнивание по левому краю без красной строки (jc='left', first_line=None)
     - нулевые отбивки между строками листинга (spacing_before=0, spacing_after=0)
+    - shaded=True добавляет серую подложку, акцентную левую границу и рамку
+      сверху/снизу; таблица для этого не нужна, подсчёт таблиц не меняется
     """
-    out = []
-    for ln in code.rstrip("\n").split("\n"):
-        out.append(para(run(ln if ln else " ", font=COURIER, sz=20),
-                        jc="left", first_line=None, spacing_before=0, spacing_after=0, line=240))
-    return "".join(out)
+    lines = code.rstrip("\n").split("\n")
+    return "".join(
+        _code_line(line, shaded, index == 0, index == len(lines) - 1)
+        for index, line in enumerate(lines)
+    )
 
 def image_xml(png_path, rid, img_id):
     """Рисунок по центру + подпись. Возвращает (XML, данные PNG)."""
@@ -594,9 +620,9 @@ def build(out, num, theme, content, workdir, ctx=None, title=True):
             paras.append(body_para(item["p"]))
         elif "codefile" in item:
             with open(resolve(item["codefile"]), encoding="utf-8") as f:
-                paras.append(code_block(f.read()))
+                paras.append(code_block(f.read(), shaded=bool(item.get("shaded"))))
         elif "code" in item:
-            paras.append(code_block(item["code"]))
+            paras.append(code_block(item["code"], shaded=bool(item.get("shaded"))))
         elif "table" in item:
             spec = item["table"]
             table_number += 1
