@@ -1,0 +1,20 @@
+# Store every text file with LF line endings and check it out the same way.
+# This keeps diffs stable on Windows and removes the mixed CRLF / CRCRLF
+# artifacts that earlier Windows editors produced.
+* text=auto eol=lf
+
+# Files that must never be converted or merged as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.doc binary
+*.xlsx binary
+*.zip binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
