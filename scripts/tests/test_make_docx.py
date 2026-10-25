@@ -199,5 +199,55 @@ class CodeStyleTest(unittest.TestCase):
         self.assertIn("print('ok')", xml)
 
 
+class StructureElementsTest(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tempdir.name)
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def build(self, content):
+        output = self.root / "doc.docx"
+        make_docx.build(str(output), 1, "Topic", content, str(self.root), None, title=False)
+        with zipfile.ZipFile(output) as archive:
+            return {
+                "document": archive.read("word/document.xml").decode("utf-8"),
+                "styles": archive.read("word/styles.xml").decode("utf-8"),
+                "rels": archive.read("word/_rels/document.xml.rels").decode("utf-8"),
+                "text": docx_text.extract_docx_text(output),
+            }
+
+    def test_h1_and_h2_use_heading_styles(self):
+        parts = self.build([{"h": "Section"}, {"h2": "Subsection"}])
+        self.assertIn('w:pStyle w:val="Heading1"', parts["document"])
+        self.assertIn('w:pStyle w:val="Heading2"', parts["document"])
+        self.assertIn('w:styleId="Heading1"', parts["styles"])
+        self.assertIn('w:styleId="Heading2"', parts["styles"])
+
+    def test_unordered_list_has_dash_and_hanging_indent(self):
+        parts = self.build([{"ul": ["First", "Second"]}])
+        self.assertIn("– First", parts["text"])
+        self.assertIn("– Second", parts["text"])
+        self.assertIn('w:hanging="360"', parts["document"])
+
+    def test_ordered_list_is_numbered(self):
+        parts = self.build([{"ol": ["First", "Second"]}])
+        self.assertIn("1. First", parts["text"])
+        self.assertIn("2. Second", parts["text"])
+
+    def test_hyperlink_creates_external_relationship(self):
+        parts = self.build([{"link": "https://example.com/a?x=1&y=2", "text": "Example"}])
+        self.assertIn("<w:hyperlink r:id=", parts["document"])
+        self.assertIn("Example", parts["text"])
+        self.assertIn("TargetMode=\"External\"", parts["rels"])
+        self.assertIn("https://example.com/a?x=1&amp;y=2", parts["rels"])
+
+    def test_empty_list_and_link_are_rejected(self):
+        for content in ([{"ul": []}], [{"ol": []}], [{"link": ""}], [{"ul": [""]}]):
+            with self.assertRaises(ValueError):
+                self.build(content)
+
+
 if __name__ == "__main__":
     unittest.main()

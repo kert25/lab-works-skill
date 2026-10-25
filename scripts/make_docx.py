@@ -56,6 +56,9 @@ content.json — список элементов:
                                                — формула OMML по центру, номер (N) справа;
                                                  поддержаны ^, _, \\frac{}, \\sqrt{}, греческие
                                                  буквы и математические символы
+    {"h2": "Подраздел"}                        — заголовок второго уровня (Heading2)
+    {"ul": ["пункт", ...]} / {"ol": [...]}     — маркированный или нумерованный список
+    {"link": "https://...", "text": "..."}     — внешняя гиперссылка
     {"pb": true}                               — разрыв страницы
 Относительные пути в content.json разрешаются от каталога самого content.json.
 """
@@ -89,7 +92,8 @@ def run(text, font=TNR, sz=28, b=False, br_type=None):
     return "<w:r>%s%s<w:t xml:space=\"preserve\">%s</w:t></w:r>" % (rpr, br, esc(text))
 
 def para(runs, jc=None, spacing=True, ind=None, first_line=None,
-         spacing_before=None, spacing_after=None, line=None, keep_next=False):
+         spacing_before=None, spacing_after=None, line=None, keep_next=False,
+         style=None, hanging=None):
     """Абзац: runs — строка XML run'ов или их список.
 
     Поддерживает параметры оформления по ГОСТ 7.32 / ГОСТ 2.105:
@@ -102,6 +106,8 @@ def para(runs, jc=None, spacing=True, ind=None, first_line=None,
     """
     body = "".join(runs) if isinstance(runs, list) else runs
     ppr = ["<w:pPr>"]
+    if style:
+        ppr.append('<w:pStyle w:val="%s"/>' % style)
     if keep_next:
         ppr.append("<w:keepNext/>")
     if spacing:
@@ -119,6 +125,8 @@ def para(runs, jc=None, spacing=True, ind=None, first_line=None,
         ind_attrs.append('w:left="%d" w:right="%d"' % ind)
     if first_line is not None:
         ind_attrs.append('w:firstLine="%d"' % first_line)
+    if hanging is not None:
+        ind_attrs.append('w:hanging="%d"' % hanging)
     if ind_attrs:
         ppr.append('<w:ind %s/>' % " ".join(ind_attrs))
     if jc:
@@ -185,7 +193,7 @@ def title_page(num, theme, ctx):
     p.append('<w:p>%s</w:p>' % run("", br_type="page"))                          # P29
     return "".join(p)
 
-def heading(text):
+def heading(text, level=1):
     """Заголовок раздела по ГОСТ 7.32:
     - Times New Roman 14 pt полужирный (sz=28, b=True)
     - абзацный отступ 1,25 см (first_line=709)
@@ -193,9 +201,12 @@ def heading(text):
     - полуторный интервал (line=360)
     - отбивки: 12 pt сверху (240 dxa), 6 pt снизу (120 dxa)
     - keepNext: заголовок не отрывается от текста следующего абзаца
+    - style Heading1/Heading2: навигация и оглавление в Word
     """
+    style = "Heading2" if level >= 2 else "Heading1"
     return para(run(text, sz=28, b=True), jc="left", first_line=709,
-                spacing_before=240, spacing_after=120, line=360, keep_next=True)
+                spacing_before=240, spacing_after=120, line=360, keep_next=True,
+                style=style)
 
 def body_para(text):
     """Основной текст по ГОСТ 7.32:
@@ -423,6 +434,8 @@ STYLES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:docDefaults><w:rPrDefault><w:rPr>%(tnr)s<w:sz w:val="28"/><w:szCs w:val="28"/><w:lang w:val="ru-RU"/></w:rPr></w:rPrDefault>
 <w:pPrDefault><w:pPr><w:spacing w:before="0" w:after="0" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>
 <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>
+<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/></w:rPr></w:style>
 </w:styles>"""
 
 FOOTER = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
@@ -595,6 +608,32 @@ def numbered_caption(text, label, number, pattern):
     return "%s %d — %s" % (label, number, value)
 
 
+def list_block(items, numbered=False):
+    """Render a ul/ol list as paragraphs with a hanging indent."""
+    if not isinstance(items, list) or not items:
+        raise ValueError("список ul/ol должен быть непустым списком строк")
+    out = []
+    for index, value in enumerate(items, 1):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("элементы списка ul/ol должны быть непустыми строками")
+        marker = ("%d." % index) if numbered else "–"
+        out.append(para(run("%s %s" % (marker, value.strip()), sz=28), jc="both",
+                        ind=(709, 0), hanging=360,
+                        spacing_before=0, spacing_after=0, line=360))
+    return "".join(out)
+
+
+def hyperlink_xml(url, text, rid):
+    """Paragraph with an external hyperlink; the relationship is added in build()."""
+    label = text if isinstance(text, str) and text.strip() else url
+    return ('<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="360" w:lineRule="auto"/>'
+            '<w:jc w:val="both"/></w:pPr><w:hyperlink r:id="%s">'
+            '<w:r><w:rPr>%s<w:color w:val="0563C1"/><w:u w:val="single"/>'
+            '<w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr>'
+            '<w:t xml:space="preserve">%s</w:t></w:r></w:hyperlink></w:p>'
+            % (rid, TNR, esc(label)))
+
+
 def build(out, num, theme, content, workdir, ctx=None, title=True):
     validate_content(content, num, theme, title)
     def resolve(p):
@@ -609,13 +648,17 @@ def build(out, num, theme, content, workdir, ctx=None, title=True):
                           jc="center", first_line=None, spacing_before=0, spacing_after=240, line=360))
         paras.append(para(run(" ", sz=28), first_line=None, spacing_before=0, spacing_after=0, line=240))
     media, img_rels = {}, []
+    link_rels = []
     rid_n = 100
+    link_n = 200
     figure_number = 0
     table_number = 0
     formula_number = 0
     for item in content:
         if "h" in item:
             paras.append(heading(item["h"]))
+        elif "h2" in item:
+            paras.append(heading(item["h2"], level=2))
         elif "p" in item:
             paras.append(body_para(item["p"]))
         elif "codefile" in item:
@@ -632,6 +675,22 @@ def build(out, num, theme, content, workdir, ctx=None, title=True):
                 paras.append(para(run(table_caption, sz=24), jc="left", first_line=None,
                                   spacing_before=120, spacing_after=60, line=240))
             paras.append(table_xml(spec))
+        elif "ul" in item:
+            paras.append(list_block(item["ul"]))
+        elif "ol" in item:
+            paras.append(list_block(item["ol"], numbered=True))
+        elif "link" in item:
+            url = item["link"]
+            if not isinstance(url, str) or not url.strip():
+                raise ValueError("link должен быть непустой строкой")
+            rid = "rIdLink%d" % link_n
+            link_n += 1
+            link_rels.append(
+                '<Relationship Id="%s" Type="http://schemas.openxmlformats.org'
+                '/officeDocument/2006/relationships/hyperlink" Target="%s" '
+                'TargetMode="External"/>' % (rid, esc(url.strip()))
+            )
+            paras.append(hyperlink_xml(url.strip(), item.get("text"), rid))
         elif "formula" in item:
             if item.get("numbered", True):
                 formula_number += 1
@@ -663,7 +722,7 @@ def build(out, num, theme, content, workdir, ctx=None, title=True):
         z.writestr("[Content_Types].xml", CONTENT_TYPES)
         z.writestr("_rels/.rels", RELS)
         z.writestr("word/document.xml", document)
-        z.writestr("word/_rels/document.xml.rels", DOC_RELS % "".join(img_rels))
+        z.writestr("word/_rels/document.xml.rels", DOC_RELS % "".join(img_rels + link_rels))
         z.writestr("word/styles.xml", STYLES % {"w": W, "tnr": TNR})
         z.writestr("word/footer1.xml", FOOTER)
         for name, data in media.items():
