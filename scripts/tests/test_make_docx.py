@@ -249,5 +249,53 @@ class StructureElementsTest(unittest.TestCase):
                 self.build(content)
 
 
+class DocumentRobustnessTest(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tempdir.name)
+        self.context = {
+            "university": ["Test University"],
+            "discipline": "Web technologies",
+            "student": "Ivanov I.I.",
+            "group": "435",
+            "teacher": "Petrov P.P.",
+            "teacher_title": "Docent",
+            "city": "Moscow",
+            "year": "2026",
+        }
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def build(self, content, title=False):
+        output = self.root / "doc.docx"
+        make_docx.build(str(output), 1, "Topic", content, str(self.root),
+                        self.context if title else None, title=title)
+        with zipfile.ZipFile(output) as archive:
+            document = archive.read("word/document.xml").decode("utf-8")
+        return document, docx_text.extract_docx_text(output)
+
+    def test_control_characters_are_stripped(self):
+        document, text = self.build([{"code": "bad\x00value"}])
+        self.assertNotIn("\x00", document)
+        self.assertIn("badvalue", text)
+
+    def test_non_png_image_is_rejected(self):
+        (self.root / "photo.jpg").write_bytes(b"\xff\xd8\xff\xe0not a png")
+        with self.assertRaisesRegex(ValueError, "PNG"):
+            self.build([{"img": "photo.jpg", "caption": "Photo"}])
+
+    def test_title_page_aligns_values_with_a_tab_stop(self):
+        document, _ = self.build([{"p": "Body"}], title=True)
+        self.assertIn('<w:tab w:val="right" w:pos="9355"/>', document)
+        self.assertNotIn(" " * 20, document)
+
+    def test_text_docx_has_no_title_page_flag(self):
+        plain, _ = self.build([{"p": "Notes"}], title=False)
+        titled, _ = self.build([{"p": "Body"}], title=True)
+        self.assertNotIn("<w:titlePg/>", plain)
+        self.assertIn("<w:titlePg/>", titled)
+
+
 if __name__ == "__main__":
     unittest.main()

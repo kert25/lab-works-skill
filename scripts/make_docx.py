@@ -81,8 +81,11 @@ COURIER = '<w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier N
 TABLE_WIDTH = 9355
 
 def esc(s):
-    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-             .replace('"', "&quot;"))
+    """Escape XML and drop control characters that make Word reject the file."""
+    text = "".join(character for character in str(s)
+                   if character in "\t\n\r" or ord(character) >= 0x20)
+    return (text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                 .replace('"', "&quot;"))
 
 def run(text, font=TNR, sz=28, b=False, br_type=None):
     """Один run: sz в полукеглях (28 = 14 pt), b — полужирный, br_type — тип <w:br/>."""
@@ -154,6 +157,19 @@ def load_context(path):
         ctx["university"] = [ctx["university"]]
     return ctx
 
+def title_line(left, right):
+    """Title-page line: label on the left, value right-aligned via a tab stop."""
+    return ('<w:p><w:pPr><w:tabs><w:tab w:val="right" w:pos="9355"/></w:tabs>'
+            '<w:spacing w:after="120" w:line="240" w:lineRule="auto"/>'
+            '<w:jc w:val="left"/></w:pPr>'
+            '<w:r><w:rPr>%s<w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr>'
+            '<w:t xml:space="preserve">%s</w:t></w:r>'
+            '<w:r><w:tab/></w:r>'
+            '<w:r><w:rPr>%s<w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr>'
+            '<w:t xml:space="preserve">%s</w:t></w:r></w:p>'
+            % (TNR, esc(left), TNR, esc(right)))
+
+
 def title_page(num, theme, ctx):
     """Титульный лист — типовой для вузов РФ, все данные из ctx.
 
@@ -164,9 +180,7 @@ def title_page(num, theme, ctx):
     (адаптация остаётся в копии проекта, в скилл не копируется).
     Ширины строк «Выполнил»/«Принял»: имя прижимается к правому краю."""
     done_left = ctx.get("performed_prefix", "Выполнил: ст. гр.  ") + ctx["group"]
-    done_pad = max(1, 80 - len(done_left))
     took_left = ctx.get("accepted_prefix", "Принял: ") + ctx["teacher_title"]
-    took_pad = max(1, 72 - len(took_left))
     p = []
     for line in ctx["university"]:                                   # шапка вуза
         p.append(para(run(line), jc="center"))
@@ -182,11 +196,9 @@ def title_page(num, theme, ctx):
              '<w:jc w:val="center"/></w:pPr>%s</w:p>' % run("«%s»" % theme))     # P14
     for _ in range(4):                                               # P15-P18
         p.append(para(run(""), jc="center"))
-    p.append(para([run(done_left + " " * done_pad),                             # P19
-                   run("%s " % ctx.get("student_title", ctx["student"])), run(" ")], jc="both"))
+    p.append(title_line(done_left, str(ctx.get("student_title", ctx["student"]))))  # P19
     p.append(para(run(""), jc="both"))                                          # P20
-    p.append(para([run(took_left + " " * took_pad),                             # P21
-                   run("%s " % ctx["teacher"]), run(" ")], jc="both"))
+    p.append(title_line(took_left, str(ctx["teacher"])))                        # P21
     for _ in range(6):                                                # P22-P27
         p.append(para(run(""), jc="both"))
     p.append(para(run("%s %s" % (ctx["city"], ctx["year"])), jc="center"))       # P28
@@ -263,6 +275,8 @@ def image_xml(png_path, rid, img_id):
     """Рисунок по центру + подпись. Возвращает (XML, данные PNG)."""
     with open(png_path, "rb") as f:
         data = f.read()
+    if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        raise ValueError("рисунок должен быть корректным PNG: %s" % png_path)
     wpx, hpx = struct.unpack(">II", data[16:24])
     maxw = int(16.5 / 2.54 * 96)  # ~16,5 см полезной ширины страницы
     if wpx > maxw:
@@ -446,10 +460,13 @@ FOOTER = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
          '<w:r><w:fldChar w:fldCharType="end"/></w:r>',
          jc="center", first_line=None, spacing_before=0, spacing_after=0, line=240))
 
-SECT_PR = ('<w:sectPr><w:footerReference w:type="default" r:id="rId2"/>'
-           '<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="850" '
-           'w:bottom="1134" w:left="1701" w:header="708" w:footer="708" w:gutter="0"/>'
-           '<w:titlePg/></w:sectPr>')
+SECT_BASE = ('<w:sectPr><w:footerReference w:type="default" r:id="rId2"/>'
+             '<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="850" '
+             'w:bottom="1134" w:left="1701" w:header="708" w:footer="708" w:gutter="0"/>%s'
+             '</w:sectPr>')
+SECT_PR = SECT_BASE % "<w:titlePg/>"
+# text.docx has no title page: without titlePg its first page gets a number.
+SECT_PR_PLAIN = SECT_BASE % ""
 
 def validate_content(content, num, theme, title):
     """Validate report content and prevent a duplicate automatic report header."""
@@ -717,7 +734,7 @@ def build(out, num, theme, content, workdir, ctx=None, title=True):
     document = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
                 '<w:document xmlns:w="%s" xmlns:r="%s" xmlns:m="%s">'
                 '<w:body>%s%s</w:body></w:document>'
-                % (W, R, MATH_NAMESPACE, "".join(paras), SECT_PR))
+                % (W, R, MATH_NAMESPACE, "".join(paras), SECT_PR if title else SECT_PR_PLAIN))
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", CONTENT_TYPES)
         z.writestr("_rels/.rels", RELS)

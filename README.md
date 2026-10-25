@@ -61,6 +61,9 @@ python .skill-eval/pipeline.py check              # структура скил�
 python .skill-eval/pipeline.py test               # всё вышеперечисленное
 ```
 
+CI (`.github/workflows/ci.yml`) запускает Python- и Node-тесты на `windows-latest`
+при push в `main` и в pull request.
+
 Итеративная оценка скилла (A/B with/without skill) описана в
 `.skill-eval/README.md`; журнал фактических прогонов — в `EVAL_NOTES.md`.
 
@@ -70,5 +73,3 @@ python .skill-eval/pipeline.py test               # всё вышеперечи�
   используйте `capture_cdp.js`.
 - Доказательство CLI — отрисованный кадр реального вывода, а не фотография консоли;
   в кадре печатаются код возврата и пометка об автоматической отрисовке.
-- Репозиторий содержит файлы со смешанными переводами строк (`CRLF` и `\r\r\n`);
-  нормализация вынесена в отдельную задачу.

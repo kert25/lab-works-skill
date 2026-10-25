@@ -34,6 +34,18 @@ async function run() {
   assert.ok(ansi.includes("OK") && ansi.includes("FAIL"));
   assert.ok(!ansi.includes("\u001b["));
 
+  // 3c2. Фон, 256-цветный режим и начертания
+  const ansiBg = ansiToHtml("\u001b[41mERR\u001b[0m");
+  assert.ok(ansiBg.includes("background-color:#FF5C57"));
+  const ansi256 = ansiToHtml("\u001b[38;5;196mred\u001b[0m");
+  assert.ok(ansi256.includes("rgb(255,0,0)"));
+  const ansiTrue = ansiToHtml("\u001b[38;2;1;2;3mtrue\u001b[0m");
+  assert.ok(ansiTrue.includes("rgb(1,2,3)"));
+  const ansiStyled = ansiToHtml("\u001b[1;3;4mstyled\u001b[0m");
+  assert.ok(ansiStyled.includes("font-weight:600"));
+  assert.ok(ansiStyled.includes("font-style:italic"));
+  assert.ok(ansiStyled.includes("text-decoration:underline"));
+
   // 3d. В кадре видны код возврата и честная пометка об автоматической отрисовке
   const htmlExit = generateCliTerminalHtml("py app.py", "вывод", { exitCode: 0 });
   assert.ok(htmlExit.includes("код возврата: 0"));

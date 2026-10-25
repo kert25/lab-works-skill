@@ -146,12 +146,36 @@ function escapeHtml(text) {
     .replace(/'/g, "&#39;");
 }
 
-const ANSI_COLORS = {
-  30: "#4E555B", 31: "#FF5C57", 32: "#5AF78E", 33: "#F3F99D",
-  34: "#57C7FF", 35: "#FF6AC1", 36: "#9AEDFE", 37: "#F1F1F0",
-  90: "#7F8C98", 91: "#FF6E67", 92: "#5AF78E", 93: "#F3F99D",
-  94: "#57C7FF", 95: "#FF6AC1", 96: "#9AEDFE", 97: "#F1F1F0",
-};
+const ANSI_BASE_COLORS = [
+  "#4E555B", "#FF5C57", "#5AF78E", "#F3F99D",
+  "#57C7FF", "#FF6AC1", "#9AEDFE", "#F1F1F0",
+  "#7F8C98", "#FF6E67", "#5AF78E", "#F3F99D",
+  "#57C7FF", "#FF6AC1", "#9AEDFE", "#F1F1F0",
+];
+
+function color256(index) {
+  if (index < 16) return ANSI_BASE_COLORS[index];
+  if (index < 232) {
+    const value = index - 16;
+    const red = Math.floor(value / 36) * 51;
+    const green = Math.floor((value % 36) / 6) * 51;
+    const blue = (value % 6) * 51;
+    return `rgb(${red},${green},${blue})`;
+  }
+  const gray = 8 + (index - 232) * 10;
+  return `rgb(${gray},${gray},${gray})`;
+}
+
+function ansiStyle(state) {
+  const parts = [];
+  if (state.fg) parts.push(`color:${state.fg}`);
+  if (state.bg) parts.push(`background-color:${state.bg}`);
+  if (state.bold) parts.push("font-weight:600");
+  if (state.dim) parts.push("opacity:0.7");
+  if (state.italic) parts.push("font-style:italic");
+  if (state.underline) parts.push("text-decoration:underline");
+  return parts.join(";");
+}
 
 function decodeOutput(buffer) {
   if (!buffer || !buffer.length) return "";
@@ -168,29 +192,57 @@ function decodeOutput(buffer) {
 function ansiToHtml(text) {
   const source = String(text).replace(/\u001b\][^\u0007]*\u0007/g, "");
   const pattern = /\u001b\[([0-9;?]*)([A-Za-z])/g;
+  const state = { fg: null, bg: null, bold: false, dim: false, italic: false, underline: false };
+  const reset = () => {
+    state.fg = null;
+    state.bg = null;
+    state.bold = false;
+    state.dim = false;
+    state.italic = false;
+    state.underline = false;
+  };
+  const emit = (segment) => {
+    if (!segment) return "";
+    const style = ansiStyle(state);
+    return style ? `<span style="${style}">${escapeHtml(segment)}</span>` : escapeHtml(segment);
+  };
   let html = "";
   let lastIndex = 0;
-  let depth = 0;
   let match;
   while ((match = pattern.exec(source))) {
-    html += escapeHtml(source.slice(lastIndex, match.index));
+    html += emit(source.slice(lastIndex, match.index));
     lastIndex = pattern.lastIndex;
     if (match[2] !== "m") continue;
     const codes = match[1] === "" ? [0] : match[1].split(";").map(Number);
-    for (const code of codes) {
-      if (code === 0) {
-        while (depth > 0) { html += "</span>"; depth -= 1; }
-      } else if (code === 1) {
-        html += '<span style="font-weight:600">';
-        depth += 1;
-      } else if (ANSI_COLORS[code]) {
-        html += `<span style="color:${ANSI_COLORS[code]}">`;
-        depth += 1;
+    for (let i = 0; i < codes.length; i += 1) {
+      const code = codes[i];
+      if (code === 0) reset();
+      else if (code === 1) state.bold = true;
+      else if (code === 2) state.dim = true;
+      else if (code === 3) state.italic = true;
+      else if (code === 4) state.underline = true;
+      else if (code === 22) { state.bold = false; state.dim = false; }
+      else if (code === 23) state.italic = false;
+      else if (code === 24) state.underline = false;
+      else if (code === 39) state.fg = null;
+      else if (code === 49) state.bg = null;
+      else if (code >= 30 && code <= 37) state.fg = ANSI_BASE_COLORS[code - 30];
+      else if (code >= 90 && code <= 97) state.fg = ANSI_BASE_COLORS[code - 90 + 8];
+      else if (code >= 40 && code <= 47) state.bg = ANSI_BASE_COLORS[code - 40];
+      else if (code >= 100 && code <= 107) state.bg = ANSI_BASE_COLORS[code - 100 + 8];
+      else if (code === 38 || code === 48) {
+        const target = code === 38 ? "fg" : "bg";
+        if (codes[i + 1] === 5 && i + 2 < codes.length) {
+          state[target] = color256(codes[i + 2]);
+          i += 2;
+        } else if (codes[i + 1] === 2 && i + 4 < codes.length) {
+          state[target] = `rgb(${codes[i + 2]},${codes[i + 3]},${codes[i + 4]})`;
+          i += 4;
+        }
       }
     }
   }
-  html += escapeHtml(source.slice(lastIndex));
-  while (depth > 0) { html += "</span>"; depth -= 1; }
+  html += emit(source.slice(lastIndex));
   return html;
 }
 

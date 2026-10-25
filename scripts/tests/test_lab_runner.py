@@ -466,6 +466,25 @@ class ReportStructureGateTest(unittest.TestCase):
         self.assertGreater(image.stat().st_size, 0)
 
 
+class ReviewQuestionsTest(unittest.TestCase):
+    def test_extra_headings_and_end_markers(self):
+        guide = (
+            "Вопросы к зачёту:\n"
+            "1. Что такое DOM?\n"
+            "2. Чем отличается CSS от HTML?\n"
+            "\n"
+            "Приложение\n"
+            "1. Этот пункт не относится к вопросам\n"
+        )
+        questions = lab_runner.extract_review_questions(guide)
+        self.assertEqual(len(questions), 2)
+        self.assertIn("DOM", questions[0])
+        self.assertNotIn("Приложение", " ".join(questions))
+
+    def test_missing_section_returns_empty_list(self):
+        self.assertEqual(lab_runner.extract_review_questions("Просто текст без вопросов."), [])
+
+
 class DocxTextTest(unittest.TestCase):
     def test_extract_docx_text_returns_visible_paragraphs(self):
         with tempfile.TemporaryDirectory() as tempdir:

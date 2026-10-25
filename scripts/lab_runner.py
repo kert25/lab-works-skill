@@ -955,8 +955,20 @@ def read_guide(root, lab_number, lab, out_path=None):
 
 def extract_review_questions(guide_text):
     """Find review questions section in guide text and return a list of extracted questions."""
+    question_start = (
+        r"(?:контрольные\s+вопросы|вопросы\s+для\s+самопроверки|"
+        r"вопросы\s+к\s+защите|вопросы\s+для\s+защиты|"
+        r"вопросы\s+к\s+зач[её]ту|вопросы\s+для\s+коллоквиума|"
+        r"тестовые\s+вопросы|вопросы\s+к\s+лабораторной\s+работе|"
+        r"вопросы\s+для\s+защиты\s+отч[её]та|задания\s+для\s+защиты)"
+    )
+    end_marker = (
+        r"(?:[А-ЯA-Z]{3,}|список|литература|приложение|"
+        r"библиографический\s+список|методические\s+указания|"
+        r"требования\s+к\s+оформлению)"
+    )
     match = re.search(
-        r"(?:контрольные\s+вопросы|вопросы\s+для\s+самопроверки|вопросы\s+к\s+защите|вопросы\s+для\s+защиты)[:\s]*(.*?)(?:\n\s*\n\s*(?:[А-ЯA-Z]{3,}|список|литература)|\Z)",
+        question_start + r"[:\s]*(.*?)(?:\n\s*\n\s*" + end_marker + r"|\Z)",
         guide_text,
         re.IGNORECASE | re.DOTALL,
     )
