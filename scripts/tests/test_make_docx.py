@@ -122,5 +122,47 @@ class TableSpanTest(unittest.TestCase):
             self.build({"rows": [["A"], []]})
 
 
+class FormulaTest(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tempdir.name)
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def build(self, content):
+        output = self.root / "doc.docx"
+        make_docx.build(str(output), 1, "Topic", content, str(self.root), None, title=False)
+        with zipfile.ZipFile(output) as archive:
+            return archive.read("word/document.xml").decode("utf-8")
+
+    def test_simple_formula_is_numbered(self):
+        xml = self.build([{"formula": "E = mc^2"}])
+        self.assertIn("<m:oMath>", xml)
+        self.assertIn("<m:sSup>", xml)
+        self.assertIn("(1)", xml)
+
+    def test_fraction_and_square_root(self):
+        xml = self.build([{"formula": "\\frac{a}{b} + \\sqrt{x}"}])
+        self.assertIn("<m:f>", xml)
+        self.assertIn("<m:rad>", xml)
+        self.assertIn('m:degHide', xml)
+
+    def test_formulas_are_numbered_sequentially(self):
+        xml = self.build([{"formula": "a + b"}, {"formula": "c - d"}])
+        self.assertIn("(1)", xml)
+        self.assertIn("(2)", xml)
+
+    def test_unnumbered_formula_has_no_number(self):
+        xml = self.build([{"formula": "a + b", "numbered": False}])
+        self.assertIn("<m:oMath>", xml)
+        self.assertNotIn("(1)", xml)
+
+    def test_invalid_formula_is_rejected(self):
+        for value in ("", "^2", "\\frac{a}"):
+            with self.assertRaises(ValueError):
+                self.build([{"formula": value}])
+
+
 if __name__ == "__main__":
     unittest.main()

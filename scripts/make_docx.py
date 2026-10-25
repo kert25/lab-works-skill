@@ -49,6 +49,10 @@ content.json — список элементов:
                                                   помещается над таблицей. Ячейка — строка
                                                   или {"text": "...", "colspan": 2, "rowspan": 2};
                                                   widths задаются по колонкам сетки
+    {"formula": "\\frac{a}{b}", "numbered": true}
+                                               — формула OMML по центру, номер (N) справа;
+                                                 поддержаны ^, _, \\frac{}, \\sqrt{}, греческие
+                                                 буквы и математические символы
     {"pb": true}                               — разрыв страницы
 Относительные пути в content.json разрешаются от каталога самого content.json.
 """
@@ -421,6 +425,138 @@ def validate_content(content, num, theme, title):
     if content[0].get("h") == automatic_title and content[1].get("h") in (theme, automatic_theme):
         raise ValueError("content starts with a duplicate automatic report header; start with a substantive section")
 
+MATH_NAMESPACE = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+MATH_SYMBOLS = {
+    "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ", "epsilon": "ε",
+    "zeta": "ζ", "eta": "η", "theta": "θ", "lambda": "λ", "mu": "μ",
+    "nu": "ν", "xi": "ξ", "pi": "π", "rho": "ρ", "sigma": "σ", "tau": "τ",
+    "phi": "φ", "chi": "χ", "psi": "ψ", "omega": "ω",
+    "Gamma": "Γ", "Delta": "Δ", "Theta": "Θ", "Lambda": "Λ", "Xi": "Ξ",
+    "Pi": "Π", "Sigma": "Σ", "Phi": "Φ", "Psi": "Ψ", "Omega": "Ω",
+    "cdot": "·", "times": "×", "pm": "±", "le": "≤", "ge": "≥", "ne": "≠",
+    "approx": "≈", "infty": "∞", "sum": "∑", "int": "∫", "partial": "∂",
+    "to": "→",
+}
+
+
+def _math_run(text):
+    return '<m:r><m:t xml:space="preserve">%s</m:t></m:r>' % esc(text)
+
+
+def _math_command(text, index):
+    cursor = index + 1
+    while cursor < len(text) and text[cursor].isalpha():
+        cursor += 1
+    if cursor == index + 1:
+        return text[index + 1:index + 2], index + 2
+    return text[index + 1:cursor], cursor
+
+
+def _math_group(text, index):
+    depth = 0
+    start = index + 1
+    while index < len(text):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:index], index + 1
+        index += 1
+    raise ValueError("в формуле не закрыта фигурная скобка")
+
+
+def _math_required_group(text, index):
+    if index >= len(text) or text[index] != "{":
+        raise ValueError("в формуле ожидается группа {...}")
+    return _math_group(text, index)
+
+
+def _math_atom(text, index):
+    if index >= len(text):
+        raise ValueError("в формуле пропущен индекс или степень")
+    if text[index] == "{":
+        group, index = _math_group(text, index)
+        return "".join(_math_nodes(group)), index
+    if text[index] == "\\":
+        name, index = _math_command(text, index)
+        return _math_run(MATH_SYMBOLS.get(name, name)), index
+    return _math_run(text[index]), index + 1
+
+
+def _math_nodes(text):
+    nodes = []
+    buffer = ""
+    index = 0
+
+    def flush():
+        nonlocal buffer
+        if buffer:
+            nodes.append(_math_run(buffer))
+            buffer = ""
+
+    while index < len(text):
+        character = text[index]
+        if character == "\\":
+            flush()
+            name, index = _math_command(text, index)
+            if name == "frac":
+                numerator, index = _math_required_group(text, index)
+                denominator, index = _math_required_group(text, index)
+                nodes.append('<m:f><m:num>%s</m:num><m:den>%s</m:den></m:f>' % (
+                    "".join(_math_nodes(numerator)), "".join(_math_nodes(denominator))))
+            elif name == "sqrt":
+                radicand, index = _math_required_group(text, index)
+                nodes.append('<m:rad><m:radPr><m:degHide m:val="1"/></m:radPr>'
+                             '<m:deg/><m:e>%s</m:e></m:rad>' % "".join(_math_nodes(radicand)))
+            else:
+                nodes.append(_math_run(MATH_SYMBOLS.get(name, name)))
+        elif character in "^_":
+            flush()
+            if not nodes:
+                raise ValueError("в формуле скрипт без основания: %s" % text)
+            base = nodes.pop()
+            index += 1
+            script, index = _math_atom(text, index)
+            if index < len(text) and text[index] in "^_" and text[index] != character:
+                other = text[index]
+                index += 1
+                second, index = _math_atom(text, index)
+                subscript, superscript = (second, script) if character == "^" else (script, second)
+                nodes.append('<m:sSubSup><m:e>%s</m:e><m:sub>%s</m:sub><m:sup>%s</m:sup></m:sSubSup>' %
+                             (base, subscript, superscript))
+            elif character == "^":
+                nodes.append('<m:sSup><m:e>%s</m:e><m:sup>%s</m:sup></m:sSup>' % (base, script))
+            else:
+                nodes.append('<m:sSub><m:e>%s</m:e><m:sub>%s</m:sub></m:sSub>' % (base, script))
+        elif character == "{":
+            flush()
+            group, index = _math_group(text, index)
+            nodes.append("".join(_math_nodes(group)))
+        else:
+            buffer += character
+            index += 1
+    flush()
+    return nodes
+
+
+def formula_xml(value, number=None):
+    """Build a centred OMML formula line with an optional right-aligned number."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("formula должна быть непустой строкой")
+    nodes = _math_nodes(value.strip())
+    if not nodes:
+        raise ValueError("formula не содержит выражения")
+    trailing = ""
+    if number is not None:
+        trailing = '<w:r><w:tab/></w:r><w:r><w:t>(%d)</w:t></w:r>' % number
+    return ('<w:p><w:pPr><w:tabs><w:tab w:val="center" w:pos="4677"/>'
+            '<w:tab w:val="right" w:pos="9355"/></w:tabs>'
+            '<w:spacing w:before="120" w:after="120" w:line="360" w:lineRule="auto"/></w:pPr>'
+            '<w:r><w:tab/></w:r><m:oMath>%s</m:oMath>%s</w:p>'
+            % ("".join(nodes), trailing))
+
+
 FIGURE_CAPTION = re.compile(r"^\s*(рисунок|рис\.)\s*\d+", re.IGNORECASE)
 TABLE_CAPTION = re.compile(r"^\s*таблица\s*\d+", re.IGNORECASE)
 
@@ -450,6 +586,7 @@ def build(out, num, theme, content, workdir, ctx=None, title=True):
     rid_n = 100
     figure_number = 0
     table_number = 0
+    formula_number = 0
     for item in content:
         if "h" in item:
             paras.append(heading(item["h"]))
@@ -469,6 +606,12 @@ def build(out, num, theme, content, workdir, ctx=None, title=True):
                 paras.append(para(run(table_caption, sz=24), jc="left", first_line=None,
                                   spacing_before=120, spacing_after=60, line=240))
             paras.append(table_xml(spec))
+        elif "formula" in item:
+            if item.get("numbered", True):
+                formula_number += 1
+                paras.append(formula_xml(item["formula"], formula_number))
+            else:
+                paras.append(formula_xml(item["formula"], None))
         elif "img" in item:
             figure_number += 1
             rid = "rIdImg%d" % rid_n
@@ -487,8 +630,9 @@ def build(out, num, theme, content, workdir, ctx=None, title=True):
         elif item.get("pb"):
             paras.append('<w:p>%s</w:p>' % run("", br_type="page"))
     document = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-                '<w:document xmlns:w="%s" xmlns:r="%s"><w:body>%s%s</w:body></w:document>'
-                % (W, R, "".join(paras), SECT_PR))
+                '<w:document xmlns:w="%s" xmlns:r="%s" xmlns:m="%s">'
+                '<w:body>%s%s</w:body></w:document>'
+                % (W, R, MATH_NAMESPACE, "".join(paras), SECT_PR))
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", CONTENT_TYPES)
         z.writestr("_rels/.rels", RELS)
