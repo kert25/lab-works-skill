@@ -153,6 +153,13 @@ Priority queue Eval 04, 05, 07–11 и 13 пройдена в `iteration-resume-
 - Изменение: `SKILL.md` сокращён до 286 строк, справочники вынесены в `references/{report-format,evidence,tools,troubleshooting}.md`; `make_docx.py` автоматически нумерует подписи рисунков и таблиц (явный номер сохраняется); добавлен `scripts/install_skill.py` с `--check`, бэкапом и проверкой SHA-256; `docx2pdf.ps1` не закрывает уже запущенный пользователем Word; порог `check` снижен до 320 строк и добавлена проверка существования `references/*.md`.
 - Проверка: 48 Python-тестов (`test_make_docx.py` — 5, `test_install_skill.py` — 8), Node-тесты, `pipeline.py check`; установка через `install_skill.py` и повторный `--check` — ok.
 
+### 2026-10-25 — нормализация переводов строк и P2: CDP, DOCX-таблицы, PDF-каскад
+
+- Основание: housekeeping по итогам ревизии и пункты `UPGRADE.md` 2.3, 4.2, 4.3.
+- Наблюдение: `lab_runner.py` хранил `CRCRLF`; `cdp.js` регистрировал ожидание `Page.loadEventFired` после навигации и мог ждать полный таймаут; таблицы DOCX схлопывались в поток абзацев; чтение PDF требовало только PyMuPDF.
+- Изменение: добавлен `.gitattributes` (`eol=lf` для текста, бинарные маски), все текстовые файлы нормализованы; `cdp.js` ставит слушатель load до навигации и сообщает о таймауте; `docx_text.py` рендерит таблицы как Markdown; `pdf_text.py` получил каскад PyMuPDF → pypdf → `pdftotext` и функции `page_count`/`page_texts`; runner и quality gate используют этот каскад.
+- Проверка: 53 Python-теста, Node-тесты, `pipeline.py check`, повторная установка через `install_skill.py` и `--check` — ok.
+
 ## Правило изменения навыка
 
 Для каждой правки добавь запись вида:

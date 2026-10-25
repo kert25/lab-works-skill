@@ -52,7 +52,7 @@ node <папка скилла>\scripts\cdp.js reset --profile-dir <ASCII-пут�
   `quality-gate`.
 
 Предупреждение «PyMuPDF недоступен» не блокирует gate, но означает, что число
-страниц PDF не проверено. Поставь `pymupdf`, если нужна полная проверка.
+страниц PDF не проверено. Поставь `pymupdf`, `pypdf` или `pdftotext`, если нужна полная проверка.
 
 ## Нет ни Word, ни LibreOffice
 

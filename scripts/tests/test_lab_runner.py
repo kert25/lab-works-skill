@@ -451,7 +451,7 @@ class ReportStructureGateTest(unittest.TestCase):
             lab_runner.quality_gate(self.root, 1, self.lab)
         record = json.loads((self.lab_dir / "quality_gate.json").read_text(encoding="utf-8"))
         self.assertTrue(record["warnings"])
-        self.assertIn("PyMuPDF", record["warnings"][0])
+        self.assertIn("PDF-бэкенд", record["warnings"][0])
 
     def test_blank_screenshot_is_rejected(self):
         image = self.root / "blank.png"
@@ -478,6 +478,30 @@ class DocxTextTest(unittest.TestCase):
                     '<w:p><w:r><w:t>Second</w:t></w:r></w:p></w:body></w:document>',
                 )
             self.assertEqual(docx_text.extract_docx_text(path), "First\nSecond")
+
+    def test_extract_docx_text_renders_tables_as_markdown(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            path = Path(tempdir) / "guide.docx"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr(
+                    "word/document.xml",
+                    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                    '<w:body>'
+                    '<w:p><w:r><w:t>Before</w:t></w:r></w:p>'
+                    '<w:tbl>'
+                    '<w:tr><w:tc><w:p><w:r><w:t>Variant</w:t></w:r></w:p></w:tc>'
+                    '<w:tc><w:p><w:r><w:t>Task</w:t></w:r></w:p></w:tc></w:tr>'
+                    '<w:tr><w:tc><w:p><w:r><w:t>9</w:t></w:r></w:p></w:tc>'
+                    '<w:tc><w:p><w:r><w:t>Build a page</w:t></w:r></w:p></w:tc></w:tr>'
+                    '</w:tbl>'
+                    '<w:p><w:r><w:t>After</w:t></w:r></w:p>'
+                    '</w:body></w:document>',
+                )
+            text = docx_text.extract_docx_text(path)
+            self.assertIn("| Variant | Task |", text)
+            self.assertIn("| 9 | Build a page |", text)
+            self.assertLess(text.index("Before"), text.index("| Variant"))
+            self.assertLess(text.index("| 9 |"), text.index("After"))
 
 
 class ReadGuideAndInitTextTest(unittest.TestCase):

@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Extract visible paragraph text from a DOCX file without external dependencies.
+"""Extract visible text from a DOCX file without external dependencies.
 
 Usage:
     py docx_text.py guide.docx
 
-The output contains paragraphs and table-cell text in document order. DOCX is a
-ZIP package, so this utility only needs the Python standard library.
+Paragraphs are returned in document order. Tables are rendered as Markdown
+(`| cell | cell |`), so variant tables from a методичка stay readable instead
+of collapsing into a stream of unrelated lines. DOCX is a ZIP package, so this
+utility only needs the Python standard library.
 """
 import argparse
 import sys
@@ -22,8 +24,33 @@ if sys.platform == "win32":
 WORD_NAMESPACE = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
+def _paragraph_text(paragraph):
+    return "".join(node.text or "" for node in paragraph.iter(WORD_NAMESPACE + "t"))
+
+
+def _cell_text(cell):
+    parts = [_paragraph_text(paragraph).strip() for paragraph in cell.findall(WORD_NAMESPACE + "p")]
+    return " ".join(part for part in parts if part).replace("|", "\\|")
+
+
+def _table_markdown(table):
+    rows = []
+    for row in table.findall(WORD_NAMESPACE + "tr"):
+        rows.append([_cell_text(cell) for cell in row.findall(WORD_NAMESPACE + "tc")])
+    if not rows:
+        return ""
+    width = max(len(row) for row in rows)
+    padded = [row + [""] * (width - len(row)) for row in rows]
+    lines = [
+        "| " + " | ".join(padded[0]) + " |",
+        "| " + " | ".join(["---"] * width) + " |",
+    ]
+    lines.extend("| " + " | ".join(row) + " |" for row in padded[1:])
+    return "\n".join(lines)
+
+
 def extract_docx_text(path):
-    """Return visible document paragraphs joined by newlines."""
+    """Return visible paragraphs and Markdown tables joined by newlines."""
     try:
         with zipfile.ZipFile(path) as archive:
             document = archive.read("word/document.xml")
@@ -39,12 +66,20 @@ def extract_docx_text(path):
     except element_tree.ParseError as exc:
         raise SystemExit("Некорректный word/document.xml в %s: %s" % (path, exc))
 
-    paragraphs = []
-    for paragraph in root.iter(WORD_NAMESPACE + "p"):
-        text = "".join(node.text or "" for node in paragraph.iter(WORD_NAMESPACE + "t"))
-        if text:
-            paragraphs.append(text)
-    return "\n".join(paragraphs)
+    body = root.find(WORD_NAMESPACE + "body")
+    if body is None:
+        return ""
+    blocks = []
+    for child in body:
+        if child.tag == WORD_NAMESPACE + "p":
+            text = _paragraph_text(child)
+            if text:
+                blocks.append(text)
+        elif child.tag == WORD_NAMESPACE + "tbl":
+            table = _table_markdown(child)
+            if table:
+                blocks.append(table)
+    return "\n".join(blocks)
 
 
 def main():

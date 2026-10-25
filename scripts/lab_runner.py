@@ -39,6 +39,7 @@ from xml.etree import ElementTree
 
 from docx_text import extract_docx_text
 from make_docx import build, load_context
+from pdf_text import page_count, page_texts
 
 if sys.platform == "win32":
     if hasattr(sys.stdout, "reconfigure"):
@@ -716,19 +717,14 @@ def docx_element_count(path, local_name):
 
 
 def pdf_page_count(path):
-    """Return the page count through PyMuPDF, or None when the library is absent."""
+    """Return the page count through any available PDF backend, or None."""
     try:
-        import pymupdf as fitz
-    except ImportError:
-        try:
-            import fitz
-        except ImportError:
-            return None
-    try:
-        with fitz.open(str(path)) as document:
-            return len(document)
+        pages = page_count(path)
+    except SystemExit as error:
+        fail("PDF не читается: %s" % error)
     except Exception as error:  # noqa: BLE001 - any parser failure means a broken PDF
-        fail("PDF не читается PyMuPDF: %s" % error)
+        fail("PDF не читается: %s" % error)
+    return pages if pages else None
 
 
 def collapsed_text(value):
@@ -785,7 +781,7 @@ def verify_report_structure(root, lab_number, lab):
             fail("в text.docx остались заглушки конспекта: «%s»" % marker)
     pages = pdf_page_count(pdf_path)
     if pages is None:
-        warnings.append("PyMuPDF недоступен: число страниц PDF не проверено")
+        warnings.append("PDF-бэкенд (pymupdf/pypdf/pdftotext) недоступен: число страниц PDF не проверено")
     elif pages < 2:
         fail("PDF содержит %d страницу: собран только титульный лист" % pages)
     print("STRUCTURE OK: разделов %d, рисунков %d, таблиц %d, страниц PDF %s" %
@@ -924,15 +920,7 @@ def extract_guide_text(guide_path):
         from docx_text import extract_docx_text
         return extract_docx_text(guide_path)
     elif ext == ".pdf":
-        try:
-            import pymupdf as fitz
-        except ImportError:
-            try:
-                import fitz
-            except ImportError:
-                fail("для чтения PDF-методички требуется библиотека PyMuPDF (pymupdf)")
-        with fitz.open(guide_path) as doc:
-            return "\n".join(page.get_text() for page in doc)
+        return "\n".join(text for _, text in page_texts(guide_path))
     else:
         try:
             return guide_path.read_text(encoding="utf-8")

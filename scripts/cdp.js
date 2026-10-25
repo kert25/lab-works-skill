@@ -233,6 +233,31 @@ async function cmdRun(opts) {
   await Promise.race([cdp.send("Page.enable"), sleep(3000)]);
   await Promise.race([cdp.send("Runtime.enable"), sleep(3000)]).catch(() => {});
 
+  // Ожидание события по имени. Слушатель регистрируется один раз, а не на
+  // каждую навигацию: иначе быстрый Page.loadEventFired остаётся незамеченным
+  // и команда ждёт полный таймаут.
+  const eventWaiters = new Map();
+  cdp.on((method) => {
+    const waiter = eventWaiters.get(method);
+    if (waiter) {
+      eventWaiters.delete(method);
+      waiter();
+    }
+  });
+
+  function waitEvent(method, timeoutMs) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        eventWaiters.delete(method);
+        resolve(false);
+      }, timeoutMs);
+      eventWaiters.set(method, () => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+    });
+  }
+
   const evals = [];   // очередь действий в порядке argv
   function push(kind, value) { evals.push({ kind, value }); }
 
@@ -280,15 +305,11 @@ async function cmdRun(opts) {
       case "url":
       case "file": {
         const u = act.kind === "file" ? act.value : encodeURI(act.value);
-        const nav = cdp.send("Page.navigate", { url: u });
-        // дождаться load или диалога
-        await Promise.race([nav, sleep(opts.timeout || 15000)]);
-        await new Promise(res => {
-          let done = false;
-          const t = setTimeout(() => { if (!done) { done = true; res(); } }, opts.timeout || 15000);
-          cdp.on((m) => { if (m === "Page.loadEventFired" && !done) { done = true; clearTimeout(t); res(); } });
-        });
-        print("NAV " + u);
+        const timeoutMs = Number(opts.timeout) || 15000;
+        const loaded = waitEvent("Page.loadEventFired", timeoutMs);
+        await Promise.race([cdp.send("Page.navigate", { url: u }), sleep(timeoutMs)]);
+        const finished = await loaded;
+        print("NAV " + u + (finished ? "" : " (таймаут ожидания load)"));
         break;
       }
       case "eval": await doEval(act.value, true); break;

@@ -33,8 +33,9 @@ evals/                    — сценарии оценки и корпус ре
 - Node.js ≥ 22 для `cdp.js` и `capture_cdp.js`.
 - Microsoft Edge или Google Chrome.
 - Microsoft Word (COM) или LibreOffice для PDF.
-- PyMuPDF (`pip install pymupdf`) — для проверки страниц PDF и чтения PDF-методичек;
-  без него gate работает, но пишет предупреждение.
+- PyMuPDF (`pip install pymupdf`), либо `pypdf`, либо `pdftotext` — для проверки
+  страниц PDF и чтения PDF-методичек; без любого из них gate работает, но пишет
+  предупреждение.
 
 ## Установка и обновление
 
