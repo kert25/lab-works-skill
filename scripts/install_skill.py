@@ -107,7 +107,7 @@ def check(source: Path, target: Path) -> tuple[str, list[str]]:
     if not target.is_dir():
         return "missing", ["каталог не найден: %s" % target]
     expected = collect(source, skip_dev=True)
-    actual = collect(target)
+    actual = collect(target, skip_dev=True)
     problems = []
     for name in sorted(set(expected) - set(actual)):
         problems.append("нет файла: %s" % name)
@@ -123,7 +123,7 @@ def install(source: Path, target: Path, make_backup: bool = True) -> str:
     """Replace the target with a verified copy of the source; return a status."""
     _validate(source, target)
     expected = collect(source, skip_dev=True)
-    if target.is_dir() and collect(target) == expected:
+    if target.is_dir() and collect(target, skip_dev=True) == expected:
         return "up to date"
 
     staging = target.parent / (".%s-stage-%s" % (target.name, uuid.uuid4().hex))
@@ -143,7 +143,7 @@ def install(source: Path, target: Path, make_backup: bool = True) -> str:
             os.replace(backup, target)
         raise
 
-    if collect(target) != expected:
+    if collect(target, skip_dev=True) != expected:
         shutil.rmtree(target, ignore_errors=True)
         if backup is not None and backup.exists():
             os.replace(backup, target)

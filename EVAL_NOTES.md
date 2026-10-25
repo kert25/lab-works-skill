@@ -151,7 +151,7 @@ Priority queue Eval 04, 05, 07–11 и 13 пройдена в `iteration-resume-
 - Основание: ревизия скилла 2026-10-24 (раздутый `SKILL.md`, ручная нумерация подписей, рассинхронизация установленных копий).
 - Наблюдение: `SKILL.md` занимал 642 строки с дублями; подписи рисунков и таблиц нумеровались вручную и могли повторяться; установка копий делалась руками, из-за чего `~/.agents/skills/lab-works` отстал на версию.
 - Изменение: `SKILL.md` сокращён до 286 строк, справочники вынесены в `references/{report-format,evidence,tools,troubleshooting}.md`; `make_docx.py` автоматически нумерует подписи рисунков и таблиц (явный номер сохраняется); добавлен `scripts/install_skill.py` с `--check`, бэкапом и проверкой SHA-256; `docx2pdf.ps1` не закрывает уже запущенный пользователем Word; порог `check` снижен до 320 строк и добавлена проверка существования `references/*.md`.
-- Проверка: 47 Python-тестов (`test_make_docx.py` — 5, `test_install_skill.py` — 7), Node-тесты, `pipeline.py check`; установка через `install_skill.py` и повторный `--check` — ok.
+- Проверка: 48 Python-тестов (`test_make_docx.py` — 5, `test_install_skill.py` — 8), Node-тесты, `pipeline.py check`; установка через `install_skill.py` и повторный `--check` — ok.
 
 ## Правило изменения навыка
 

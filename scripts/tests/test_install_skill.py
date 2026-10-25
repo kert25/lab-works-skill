@@ -73,6 +73,14 @@ class InstallSkillTest(unittest.TestCase):
         self.assertEqual(install_skill.install(self.source, self.target), "up to date")
         self.assertFalse(list(self.target.parent.glob("lab-works.backup-*")))
 
+    def test_pycache_in_target_is_not_drift(self):
+        install_skill.install(self.source, self.target)
+        cache = self.target / "scripts" / "__pycache__"
+        cache.mkdir()
+        (cache / "tool.pyc").write_bytes(b"cache")
+        self.assertEqual(install_skill.check(self.source, self.target)[0], "ok")
+        self.assertEqual(install_skill.install(self.source, self.target), "up to date")
+
     def test_missing_target_is_reported(self):
         status, problems = install_skill.check(self.source, self.root / "absent")
         self.assertEqual(status, "missing")
