@@ -46,10 +46,10 @@ async function run() {
   assert.ok(ansiStyled.includes("font-style:italic"));
   assert.ok(ansiStyled.includes("text-decoration:underline"));
 
-  // 3d. В кадре видны код возврата и честная пометка об автоматической отрисовке
+  // 3d. В кадре виден код возврата, без лишних подписей поверх вывода
   const htmlExit = generateCliTerminalHtml("py app.py", "вывод", { exitCode: 0 });
   assert.ok(htmlExit.includes("код возврата: 0"));
-  assert.ok(htmlExit.includes("отрисован автоматически"));
+  assert.ok(!htmlExit.includes("отрисован автоматически"));
 
   // 4. Интеграционный тест снятия скриншота с временного HTML-файла
   const tempHtml = path.join(os.tmpdir(), `test-capture-${Date.now()}.html`);

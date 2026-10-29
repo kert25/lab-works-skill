@@ -11,7 +11,7 @@
 // Для --cli команда выполняется по-настоящему, её stdout/stderr декодируются как
 // UTF-8 с откатом на cp1251/cp866, ANSI-цвета переносятся в HTML, а кадр
 // растягивается на всю высоту вывода (до 8000 px). В кадре печатается код
-// возврата, поэтому изображение не выдаётся за снимок консоли.
+// возврата команды.
 "use strict";
 
 const { spawn, spawnSync } = require("child_process");
@@ -314,7 +314,6 @@ function generateCliTerminalHtml(command, output, options = {}) {
     }
     .status-ok { color: #5AF78E; }
     .status-bad { color: #FF5C57; }
-    .note { color: #6f6f6f; }
   </style>
 </head>
 <body>
@@ -326,7 +325,6 @@ function generateCliTerminalHtml(command, output, options = {}) {
     </div>
     <div class="meta">
       <span class="${statusClass}">${escapeHtml(statusText)}</span>
-      <span class="note">вывод команды, отрисован автоматически</span>
     </div>
   </div>
 </body>
