@@ -33,7 +33,7 @@ class InstallSkillTest(unittest.TestCase):
         (self.source / ".editorconfig").write_text("root = true", encoding="utf-8")
         (self.source / "docs").mkdir()
         (self.source / "docs" / "audit.md").write_text("audit", encoding="utf-8")
-        for name in ("LICENSE", "SECURITY.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md"):
+        for name in ("LICENSE", "SECURITY.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "CHANGELOG.md"):
             (self.source / name).write_text(name, encoding="utf-8")
         self.target = self.root / "installed" / "lab-works"
         self.target.parent.mkdir()
@@ -55,7 +55,7 @@ class InstallSkillTest(unittest.TestCase):
         self.assertIn("LICENSE", files)
         self.assertNotIn(".editorconfig", files)
         self.assertFalse(any(name.startswith("docs/") for name in files))
-        for name in ("SECURITY.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md"):
+        for name in ("SECURITY.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "CHANGELOG.md"):
             self.assertNotIn(name, files)
 
     def test_check_reports_ok_then_drift(self):

@@ -39,6 +39,7 @@ SKIP_PATHS = {
     ".github",
     ".editorconfig",
     "docs",
+    "CHANGELOG.md",
     "CODE_OF_CONDUCT.md",
     "CONTRIBUTING.md",
     "SECURITY.md",
