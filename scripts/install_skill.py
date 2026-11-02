@@ -14,8 +14,11 @@ skill roots. By default the script updates:
     ~/.gemini/config/skills/lab-works
 
 Only files that belong to the skill are copied: development-only paths
-(.git, .skill-eval/workspace, vendored tooling, caches) and UPGRADE.md are
-skipped. Every replacement is verified by SHA-256 and rolled back on failure.
+(.git, .skill-eval/workspace, vendored tooling, caches), repository
+documents (docs/, SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md,
+.editorconfig, .github/) and UPGRADE.md are skipped. LICENSE is copied on
+purpose: the MIT notice must travel with every copy of the skill.
+Every replacement is verified by SHA-256 and rolled back on failure.
 """
 from __future__ import annotations
 
@@ -34,6 +37,11 @@ SOURCE = Path(__file__).resolve().parents[1]
 SKIP_DIRECTORIES = {".git", "__pycache__", ".pytest_cache"}
 SKIP_PATHS = {
     ".github",
+    ".editorconfig",
+    "docs",
+    "CODE_OF_CONDUCT.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
     ".skill-eval/workspace",
     ".skill-eval/skill-creator",
     ".skill-eval/anthropic-skills",

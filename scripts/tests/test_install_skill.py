@@ -29,6 +29,12 @@ class InstallSkillTest(unittest.TestCase):
         (self.source / "UPGRADE.md").write_text("roadmap", encoding="utf-8")
         (self.source / ".github" / "workflows").mkdir(parents=True)
         (self.source / ".github" / "workflows" / "ci.yml").write_text("name: CI", encoding="utf-8")
+        (self.source / ".github" / "PULL_REQUEST_TEMPLATE.md").write_text("pr", encoding="utf-8")
+        (self.source / ".editorconfig").write_text("root = true", encoding="utf-8")
+        (self.source / "docs").mkdir()
+        (self.source / "docs" / "audit.md").write_text("audit", encoding="utf-8")
+        for name in ("LICENSE", "SECURITY.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md"):
+            (self.source / name).write_text(name, encoding="utf-8")
         self.target = self.root / "installed" / "lab-works"
         self.target.parent.mkdir()
 
@@ -46,6 +52,11 @@ class InstallSkillTest(unittest.TestCase):
         self.assertNotIn(".git/config", files)
         self.assertFalse(any("__pycache__" in name for name in files))
         self.assertFalse(any(".skill-eval/workspace" in name for name in files))
+        self.assertIn("LICENSE", files)
+        self.assertNotIn(".editorconfig", files)
+        self.assertFalse(any(name.startswith("docs/") for name in files))
+        for name in ("SECURITY.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md"):
+            self.assertNotIn(name, files)
 
     def test_check_reports_ok_then_drift(self):
         install_skill.install(self.source, self.target)
