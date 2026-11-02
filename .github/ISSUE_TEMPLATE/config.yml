@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Уязвимость или утечка данных
+    url: https://github.com/kert25/lab-works-skill/blob/main/SECURITY.md
+    about: Не открывайте публичный issue — напишите приватно по SECURITY.md.
+  - name: Правила участия
+    url: https://github.com/kert25/lab-works-skill/blob/main/CONTRIBUTING.md
+    about: Окружение, тесты, стиль коммитов и требования к PR.

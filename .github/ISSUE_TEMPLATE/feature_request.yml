@@ -1,0 +1,56 @@
+name: Предложение
+description: Идея по работе скилла, новому eval-сценарию или инструменту
+title: "[idea] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую проблему это решает
+      description: Реальный сбой или неудобство, а не «было бы неплохо».
+      placeholder: |
+        На методичке из PDF агент не находит таблицу вариантов, потому что ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Предлагаемое изменение
+      description: Что и где менять — SKILL.md, references/, scripts/ или evals/.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Альтернативы
+      description: Что ещё рассматривали и почему это хуже.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Область
+      multiple: true
+      options:
+        - workflow (SKILL.md)
+        - справочники (references/)
+        - инструменты (scripts/)
+        - сборка DOCX/PDF
+        - доказательства и скриншоты
+        - evals и корпус методичек
+        - документация репозитория
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Готовность
+      options:
+        - label: Могу приложить воспроизводимый eval-сценарий
+          required: false
+        - label: Готов(а) подготовить PR
+          required: false

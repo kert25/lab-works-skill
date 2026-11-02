@@ -1,0 +1,68 @@
+name: Баг-репорт
+description: Что-то в скилле сломалось или работает не так, как описано
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за отчёт. Если проблема связана с безопасностью или утечкой
+        персональных данных — не пишите здесь, используйте SECURITY.md.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Что произошло
+      description: Фактическое поведение и текст ошибки целиком.
+      placeholder: |
+        Команда `... --action quality-gate` завершилась кодом 2 и написала ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Что ожидалось
+      description: Со ссылкой на раздел SKILL.md или references/, если поведение там описано.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      description: Минимальная последовательность; при необходимости приложите фрагменты _lab_state.json и content.json.
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Версия скилла
+      description: Вывод `git rev-parse --short HEAD` или дата копии из install_skill.py --check.
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Окружение
+      description: ОС, Python, Node.js, Word/LibreOffice, Edge/Chrome.
+      placeholder: Windows 11, Python 3.13, Node 24, Word 2021, Edge 140
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Перед отправкой
+      options:
+        - label: Я проверил(а) последнюю версию ветки main
+          required: true
+        - label: В отчёте нет чужих персональных данных и секретов
+          required: true
+        - label: Это не уязвимость (для уязвимостей — SECURITY.md)
+          required: true
