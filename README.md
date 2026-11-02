@@ -91,6 +91,10 @@ py scripts/install_skill.py --target D:\agent\skills\lab-works   # явная ц
 
 ```text
 SKILL.md                  точка входа: workflow и инварианты, которые агент читает всегда
+LICENSE                   лицензия MIT
+CONTRIBUTING.md           правила участия, тесты и требования к PR
+SECURITY.md               модель угроз и порядок сообщения об уязвимости
+CODE_OF_CONDUCT.md        правила общения и порядок рассмотрения инцидентов
 references/               справочники, читаемые по необходимости
   report-format.md        content.json, ГОСТ, многозадачные отчёты, text.docx
   evidence.md             скриншоты, CLI-доказательства, CDP, диалоги
@@ -153,8 +157,8 @@ CI (`.github/workflows/ci.yml`) прогоняет Python- и Node-тесты н
   отрисовке.
 - PDF невозможен без Word или LibreOffice: gate в этом случае блокирующий, а
   не «успешный с предупреждением».
-- Навык оптимизирован под Windows; на Linux/macOS работают только
-  Python-инструменты и сборка DOCX.
+- Официально поддерживается Windows. На Linux и macOS сборка DOCX и PDF через
+  LibreOffice может работать, но снимки окон, COM-путь Word и `*.ps1` — нет.
 
 ## Участие, безопасность, поведение
 
