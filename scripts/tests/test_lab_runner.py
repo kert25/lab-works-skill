@@ -248,6 +248,19 @@ class RunnerBuildTest(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "Результат выполнения"):
             lab_runner.verify_report(self.root, 1, {"artifacts": ["ЛР1/Ex1.html"]})
 
+    def test_verify_report_allows_text_result_without_image(self):
+        lab_dir = self.root / "ЛР1"
+        (lab_dir / "resize.py").write_text("print('ok')", encoding="utf-8")
+        (lab_dir / "content.json").write_text(
+            json.dumps([
+                {"h": "Результат выполнения"},
+                {"p": "Итого файлов: 15, все метаданные dpi корректны."},
+                {"codefile": "resize.py"},
+            ]),
+            encoding="utf-8",
+        )
+        lab_runner.verify_report(self.root, 1, {"artifacts": ["ЛР1/resize.py"]})
+
     def test_verify_report_rejects_missing_content_reference(self):
         lab_dir = self.root / "ЛР1"
         (lab_dir / "content.json").write_text(

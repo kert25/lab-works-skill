@@ -45,7 +45,6 @@ py <папка скилла>\scripts\lab_runner.py --root . --lab 1 --action ins
 py <папка скилла>\scripts\lab_runner.py --root . --lab 1 --action quality-gate
 py <папка скилла>\scripts\lab_runner.py --root . --lab 1 --action verify-quality
 py <папка скилла>\scripts\lab_runner.py --root . --lab 1 --action prepare-report
-py <папка скилла>\scripts\lab_runner.py --root . --lab 1 --action capture-cli
 py <папка скилла>\scripts\lab_runner.py --root . --lab 1 --action check-screenshot
 py <папка скилла>\scripts\lab_runner.py --root . --lab 1 --action read-guide --out guide.txt
 py <папка скилла>\scripts\lab_runner.py --root . --lab 1 --action init-text
@@ -83,7 +82,8 @@ ASCII-safe. В выбранной записи `labs.N` обязательна �
 - `quality-gate` — см. раздел проверки в `SKILL.md`.
 - `verify-quality` — подтверждает, что `quality_gate.json` не устарел после
   правок; при расхождении требует повторить gate.
-- `capture-cli` / `check-screenshot` — см. `references/evidence.md`.
+- `check-screenshot` — см. `references/evidence.md`. Действие `capture-cli`
+  удалено: отрисованный «терминал» не является доказательством.
 
 ## ASCII-safe запуск на Windows
 

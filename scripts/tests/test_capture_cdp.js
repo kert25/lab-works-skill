@@ -5,7 +5,8 @@ const assert = require("assert");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { parseArgs, findBrowser, generateCliTerminalHtml, capture, decodeOutput, ansiToHtml } = require("../capture_cdp.js");
+const moduleUnderTest = require("../capture_cdp.js");
+const { parseArgs, findBrowser, capture } = moduleUnderTest;
 
 async function run() {
   // 1. Тест парсинга аргументов
@@ -19,37 +20,12 @@ async function run() {
   const browser = findBrowser();
   assert.ok(typeof browser === "string" && fs.existsSync(browser), "Браузер Edge/Chrome должен существовать");
 
-  // 3. Тест генератора HTML терминала
-  const html = generateCliTerminalHtml("echo 'test'", "result output", "Тестовый запуск");
-  assert.ok(html.includes("echo &#39;test&#39;"));
-  assert.ok(html.includes("result output"));
-  assert.ok(html.includes("Тестовый запуск"));
-
-  // 3b. Кириллица из UTF-8 и из cp1251 декодируется без потерь
-  assert.strictEqual(decodeOutput(Buffer.from("Привет", "utf8")), "Привет");
-  assert.strictEqual(decodeOutput(Buffer.from([0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2])), "Привет");
-
-  // 3c. ANSI-цвета превращаются в HTML без управляющих последовательностей
-  const ansi = ansiToHtml("\u001b[32mOK\u001b[0m и \u001b[31mFAIL\u001b[0m");
-  assert.ok(ansi.includes("OK") && ansi.includes("FAIL"));
-  assert.ok(!ansi.includes("\u001b["));
-
-  // 3c2. Фон, 256-цветный режим и начертания
-  const ansiBg = ansiToHtml("\u001b[41mERR\u001b[0m");
-  assert.ok(ansiBg.includes("background-color:#FF5C57"));
-  const ansi256 = ansiToHtml("\u001b[38;5;196mred\u001b[0m");
-  assert.ok(ansi256.includes("rgb(255,0,0)"));
-  const ansiTrue = ansiToHtml("\u001b[38;2;1;2;3mtrue\u001b[0m");
-  assert.ok(ansiTrue.includes("rgb(1,2,3)"));
-  const ansiStyled = ansiToHtml("\u001b[1;3;4mstyled\u001b[0m");
-  assert.ok(ansiStyled.includes("font-weight:600"));
-  assert.ok(ansiStyled.includes("font-style:italic"));
-  assert.ok(ansiStyled.includes("text-decoration:underline"));
-
-  // 3d. В кадре виден код возврата, без лишних подписей поверх вывода
-  const htmlExit = generateCliTerminalHtml("py app.py", "вывод", { exitCode: 0 });
-  assert.ok(htmlExit.includes("код возврата: 0"));
-  assert.ok(!htmlExit.includes("отрисован автоматически"));
+  // 3. Регрессия: отрисовки «терминала» в инструменте больше нет.
+  //    Снимок делается только с существующей страницы, а вывод команды
+  //    приводится текстом или снимается с реального окна (shot.ps1).
+  for (const removed of ["generateCliTerminalHtml", "runCli", "ansiToHtml", "decodeOutput"]) {
+    assert.ok(!(removed in moduleUnderTest), `функция ${removed} не должна возвращаться в capture_cdp.js`);
+  }
 
   // 4. Интеграционный тест снятия скриншота с временного HTML-файла
   const tempHtml = path.join(os.tmpdir(), `test-capture-${Date.now()}.html`);

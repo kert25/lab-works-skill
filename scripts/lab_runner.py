@@ -11,7 +11,6 @@ Usage:
     py lab_runner.py --root <project-root> --lab N --action verify-report
     py lab_runner.py --root <project-root> --lab N --action quality-gate
     py lab_runner.py --root <project-root> --lab N --action check-screenshot
-    py lab_runner.py --root <project-root> --lab N --action capture-cli
     py lab_runner.py --root <project-root> --lab N --action read-guide [--out guide.txt]
     py lab_runner.py --root <project-root> --lab N --action init-text
 
@@ -577,7 +576,13 @@ def report_has_executable_content(content, lab):
 
 
 def execution_evidence_images(content_path, lab=None):
-    """Return evidence images required by code/CLI sections, or none for text-only reports."""
+    """Return the evidence images declared right after a result section.
+
+    An image is not required: the form of the result comes from the guide, so a
+    section may show a table, the actual output text or the produced artifact
+    instead. Only declared images are returned, and their contents are validated
+    by the callers.
+    """
     with content_path.open(encoding="utf-8-sig") as stream:
         content = json.load(stream)
     has_code = report_has_executable_content(content, lab or {})
@@ -589,18 +594,17 @@ def execution_evidence_images(content_path, lab=None):
     if not has_code:
         return []
     if not result_positions:
-        fail("в отчёте есть код или cli_evidence, но нет раздела «Результат выполнения» со скриншотом")
+        fail("в отчёте есть код или cli_evidence, но нет раздела «Результат выполнения»")
     images = []
     for index in result_positions:
         following = content[index + 1] if index + 1 < len(content) else None
-        if not isinstance(following, dict) or "img" not in following:
-            fail("раздел «Результат выполнения» должен сразу содержать img с фактическим PNG запуска")
-        images.append(content_path.parent / following["img"])
+        if isinstance(following, dict) and "img" in following:
+            images.append(content_path.parent / following["img"])
     return images
 
 
 def verify_execution_evidence(content_path, lab):
-    """Require a valid, non-blank PNG after a result section when the report is executable."""
+    """Validate every evidence PNG that a result section declares; absence is allowed."""
     for image in execution_evidence_images(content_path, lab):
         if image.suffix.casefold() != ".png":
             fail("доказательство выполнения должно быть PNG: %s" % image)
@@ -624,36 +628,19 @@ def check_report_screenshots(root, lab_number, lab):
 
 
 def capture_cli_evidence(root, lab_number, lab, out_path=None):
-    """Capture CLI evidence through the bundled headless renderer."""
-    commands = lab.get("commands")
-    if not isinstance(commands, dict) or not isinstance(commands.get("cli_evidence"), str):
-        fail("для capture-cli укажите labs.%d.commands.cli_evidence" % lab_number)
-    content_path, _, _ = paths_for(root, lab_number, lab)
-    images = execution_evidence_images(content_path, lab)
-    if out_path:
-        image = resolve(root, out_path)
-        declared = {item.resolve() for item in images}
-        if declared and image.resolve() not in declared:
-            fail("capture-cli: --out %s не указан среди img в content.json" % out_path)
-    elif len(images) == 1:
-        image = images[0]
-    else:
-        fail("capture-cli: в отчёте %d разделов «Результат выполнения»; укажите --out для нужного PNG" % len(images))
-    if image.suffix.casefold() != ".png":
-        fail("img доказательства должен быть PNG: %s" % image)
-    image.parent.mkdir(parents=True, exist_ok=True)
-    launcher = Path(__file__).resolve().parent / "capture_cdp.js"
-    if not launcher.is_file():
-        fail("не найден инструмент capture_cdp.js: %s" % launcher)
-    try:
-        subprocess.run(
-            ["node", str(launcher), "--cli", commands["cli_evidence"], "--out", str(image)],
-            cwd=root, check=True,
-        )
-    except (OSError, subprocess.CalledProcessError) as error:
-        raise SystemExit("не удалось снять CLI-доказательство через capture_cdp: %s" % error)
-    check_screenshot(image)
-    print("CLI EVIDENCE %s" % image)
+    """Removed: a rendered terminal frame is not evidence.
+
+    It used to run the command and draw its output as a fake console window.
+    The image proved nothing (the same agent produced both the work and the
+    "proof") and read as staged manual work. Commands now run with the agent's
+    own shell, and the result goes into the report as text or as a screenshot
+    of a real window.
+    """
+    fail(
+        "действие capture-cli удалено: отрисованный «терминал» не является "
+        "доказательством. Выполните команду сами и приведите её вывод текстом "
+        "либо снимите реальное окно через shot.ps1"
+    )
 
 
 def verify_report(root, lab_number, lab):
@@ -1049,7 +1036,7 @@ def main():
             "check-screenshot", "capture-cli", "read-guide", "init-text",
         ),
     )
-    parser.add_argument("--out", help="файл вывода read-guide или PNG для capture-cli")
+    parser.add_argument("--out", help="файл вывода read-guide")
     args = parser.parse_args()
     root = Path(args.root).resolve()
     state = load_state(root)
