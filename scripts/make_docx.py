@@ -386,8 +386,15 @@ def table_xml(spec):
                '<w:right w:val="single" w:sz="4" w:color="auto"/>'
                '<w:insideH w:val="single" w:sz="4" w:color="auto"/>'
                '<w:insideV w:val="single" w:sz="4" w:color="auto"/></w:tblBorders>')
-    out = ['<w:tbl><w:tblPr><w:tblW w:w="%d" w:type="dxa"/>%s</w:tblPr>' %
-           (sum(widths), borders)]
+    # Фиксированная разметка колонок: без tblLayout=fixed Word пересчитывает
+    # ширины по содержимому и длинные слова выходят за границы ячеек.
+    cell_margins = ('<w:tblCellMar>'
+                    '<w:top w:w="40" w:type="dxa"/><w:left w:w="108" w:type="dxa"/>'
+                    '<w:bottom w:w="40" w:type="dxa"/><w:right w:w="108" w:type="dxa"/>'
+                    '</w:tblCellMar>')
+    out = ['<w:tbl><w:tblPr><w:tblW w:w="%d" w:type="dxa"/>'
+           '<w:tblLayout w:type="fixed"/>%s%s</w:tblPr>' %
+           (sum(widths), borders, cell_margins)]
     out.append('<w:tblGrid>%s</w:tblGrid>' % ''.join(
         '<w:gridCol w:w="%d"/>' % value for value in widths))
     for row_index in range(len(rows)):
@@ -415,10 +422,16 @@ def table_xml(spec):
                 paragraphs.append(para(
                     run(line if line else " ", sz=24, b=bool(header and row_index == 0)),
                     jc="left", first_line=None, spacing_before=40, spacing_after=40, line=240,
+                    keep_next=bool(header and row_index == 0),
                 ))
             cells.append('<w:tc><w:tcPr>%s</w:tcPr>%s</w:tc>' % ("".join(properties), "".join(paragraphs)))
             column += cell["colspan"]
-        out.append('<w:tr><w:trPr><w:cantSplit/></w:trPr>%s</w:tr>' % ''.join(cells))
+        row_properties = '<w:cantSplit/>'
+        if header and row_index == 0:
+            # Повтор шапки на каждой странице таблицы: ГОСТ 7.32 требует
+            # повторять головку, а keepNext не оставляет её одну внизу листа.
+            row_properties = '<w:tblHeader/>' + row_properties
+        out.append('<w:tr><w:trPr>%s</w:trPr>%s</w:tr>' % (row_properties, ''.join(cells)))
     return ''.join(out) + '</w:tbl>'
 
 
@@ -690,7 +703,7 @@ def build(out, num, theme, content, workdir, ctx=None, title=True):
             if caption:
                 table_caption = numbered_caption(caption, "Таблица", table_number, TABLE_CAPTION)
                 paras.append(para(run(table_caption, sz=24), jc="left", first_line=None,
-                                  spacing_before=120, spacing_after=60, line=240))
+                                  spacing_before=120, spacing_after=60, line=240, keep_next=True))
             paras.append(table_xml(spec))
         elif "ul" in item:
             paras.append(list_block(item["ul"]))
