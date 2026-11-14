@@ -87,10 +87,10 @@ def esc(s):
     return (text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                  .replace('"', "&quot;"))
 
-def run(text, font=TNR, sz=28, b=False, br_type=None):
-    """Один run: sz в полукеглях (28 = 14 pt), b — полужирный, br_type — тип <w:br/>."""
-    rpr = "<w:rPr>%s%s<w:sz w:val=\"%d\"/><w:szCs w:val=\"%d\"/></w:rPr>" % (
-        font, "<w:b/>" if b else "", sz, sz)
+def run(text, font=TNR, sz=28, b=False, br_type=None, i=False):
+    """Один run: sz в полукеглях (28 = 14 pt), b — полужирный, i — курсив, br_type — тип <w:br/>."""
+    rpr = "<w:rPr>%s%s%s<w:sz w:val=\"%d\"/><w:szCs w:val=\"%d\"/></w:rPr>" % (
+        font, "<w:b/>" if b else "", "<w:i/>" if i else "", sz, sz)
     br = '<w:br w:type="%s"/>' % br_type if br_type else ""
     return "<w:r>%s%s<w:t xml:space=\"preserve\">%s</w:t></w:r>" % (rpr, br, esc(text))
 
@@ -271,14 +271,15 @@ def code_block(code, shaded=False):
         for index, line in enumerate(lines)
     )
 
-def image_xml(png_path, rid, img_id):
+def image_xml(png_path, rid, img_id, width_cm=None):
     """Рисунок по центру + подпись. Возвращает (XML, данные PNG)."""
     with open(png_path, "rb") as f:
         data = f.read()
     if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
         raise ValueError("рисунок должен быть корректным PNG: %s" % png_path)
     wpx, hpx = struct.unpack(">II", data[16:24])
-    maxw = int(16.5 / 2.54 * 96)  # ~16,5 см полезной ширины страницы
+    # ширина рисунка: 16,5 см по умолчанию либо явно заданная в content.json
+    maxw = int((width_cm if width_cm else 16.5) / 2.54 * 96)
     if wpx > maxw:
         hpx = int(hpx * maxw / wpx)
         wpx = maxw
@@ -481,6 +482,28 @@ SECT_PR = SECT_BASE % "<w:titlePg/>"
 # text.docx has no title page: without titlePg its first page gets a number.
 SECT_PR_PLAIN = SECT_BASE % ""
 
+# Верхний колонтитул: подпись автора на каждом листе (по требованию методичек).
+SETTINGS = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+            '<w:settings xmlns:w="%s">'
+            '<w:defaultTabStop w:val="708"/>'
+            '<w:autoHyphenation w:val="true"/>'
+            '<w:consecutiveHyphenLimit w:val="2"/>'
+            '<w:hyphenationZone w:val="357"/>'
+            '<w:doNotHyphenateCaps w:val="true"/>'
+            '</w:settings>') % W
+
+HEADER_OVERRIDE = ('<Override PartName="/word/header1.xml" ContentType='
+                   '"application/vnd.openxmlformats-officedocument'
+                   '.wordprocessingml.header+xml"/>')
+
+
+def header_part(text):
+    """Верхний колонтитул: подпись автора — полужирный курсив, мелкий кегль, справа."""
+    return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+            '<w:hdr xmlns:w="%s">%s</w:hdr>') % (
+        W, para(run(text, sz=20, b=True, i=True), jc="right", first_line=None,
+                spacing_before=0, spacing_after=0, line=240))
+
 def validate_content(content, num, theme, title):
     """Validate report content and prevent a duplicate automatic report header."""
     if not isinstance(content, list):
@@ -664,7 +687,7 @@ def hyperlink_xml(url, text, rid):
             % (rid, TNR, esc(label)))
 
 
-def build(out, num, theme, content, workdir, ctx=None, title=True):
+def build(out, num, theme, content, workdir, ctx=None, title=True, header=None):
     validate_content(content, num, theme, title)
     def resolve(p):
         return os.path.normpath(os.path.join(workdir, p))
@@ -730,7 +753,8 @@ def build(out, num, theme, content, workdir, ctx=None, title=True):
         elif "img" in item:
             figure_number += 1
             rid = "rIdImg%d" % rid_n
-            drawing, data = image_xml(resolve(item["img"]), rid, rid_n)
+            drawing, data = image_xml(resolve(item["img"]), rid, rid_n,
+                                      item.get("width_cm"))
             paras.append(para(drawing, jc="center", first_line=None,
                               spacing_before=120, spacing_after=60, line=240))
             if item.get("caption"):
@@ -744,17 +768,32 @@ def build(out, num, theme, content, workdir, ctx=None, title=True):
             rid_n += 1
         elif item.get("pb"):
             paras.append('<w:p>%s</w:p>' % run("", br_type="page"))
+    sect = SECT_PR if title else SECT_PR_PLAIN
+    header_rel = ""
+    if header:
+        sect = sect.replace('<w:footerReference',
+                            '<w:headerReference w:type="default" r:id="rIdHdr"/>'
+                            '<w:footerReference', 1)
+        header_rel = ('<Relationship Id="rIdHdr" Type="http://schemas.openxmlformats.org'
+                      '/officeDocument/2006/relationships/header" Target="header1.xml"/>')
     document = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
                 '<w:document xmlns:w="%s" xmlns:r="%s" xmlns:m="%s">'
                 '<w:body>%s%s</w:body></w:document>'
-                % (W, R, MATH_NAMESPACE, "".join(paras), SECT_PR if title else SECT_PR_PLAIN))
+                % (W, R, MATH_NAMESPACE, "".join(paras), sect))
+    ct = CONTENT_TYPES
+    if header:
+        ct = ct.replace("</Types>", HEADER_OVERRIDE + "\n</Types>")
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("[Content_Types].xml", CONTENT_TYPES)
+        z.writestr("[Content_Types].xml", ct)
         z.writestr("_rels/.rels", RELS)
         z.writestr("word/document.xml", document)
-        z.writestr("word/_rels/document.xml.rels", DOC_RELS % "".join(img_rels + link_rels))
+        z.writestr("word/_rels/document.xml.rels",
+                   DOC_RELS % "".join(img_rels + link_rels + [header_rel]))
         z.writestr("word/styles.xml", STYLES % {"w": W, "tnr": TNR})
+        z.writestr("word/settings.xml", SETTINGS)
         z.writestr("word/footer1.xml", FOOTER)
+        if header:
+            z.writestr("word/header1.xml", header_part(header))
         for name, data in media.items():
             z.writestr(name, data)
     print("OK %s (%d байт, рисунков: %d)" % (out, os.path.getsize(out), len(media)))
@@ -769,12 +808,15 @@ def main():
                     help="JSON-файл данных титульного листа (по умолчанию _context.json)")
     ap.add_argument("--no-title", action="store_true",
                     help="без титульного листа и шапки (служебные документы)")
+    ap.add_argument("--header", default=None,
+                    help="текст верхнего колонтитула на каждом листе (полужирный курсив)")
     a = ap.parse_args()
     with open(a.content, encoding="utf-8-sig") as f:
         content = json.load(f)
     ctx = None if a.no_title else load_context(a.context)
     workdir = os.path.dirname(os.path.abspath(a.content))
-    build(a.out, a.num, a.theme, content, workdir, ctx, title=not a.no_title)
+    build(a.out, a.num, a.theme, content, workdir, ctx, title=not a.no_title,
+          header=a.header)
 
 if __name__ == "__main__":
     main()
