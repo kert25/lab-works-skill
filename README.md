@@ -74,9 +74,12 @@ py scripts/install_skill.py --target D:\agent\skills\lab-works   # явная ц
 ```
 
 По умолчанию обновляются `~/.agents/skills/lab-works` и
-`~/.gemini/config/skills/lab-works`. Dev-каталоги (`.git`, `.skill-eval/workspace`,
-вендоренный tooling, CI и файлы репозитория) не копируются, предыдущая версия
-сохраняется рядом как `lab-works.backup-<время>`.
+`~/.gemini/config/skills/lab-works`. Если на машине каталог установки называется
+иначе (скилл лежит git-клоном `lab-works-skill`), передайте его явно через
+`--target`: иначе скрипт создаст каталог `lab-works` рядом со вторым экземпляром.
+Dev-каталоги (`.git`, `.skill-eval/workspace`, вендоренный tooling, CI и файлы
+репозитория) не копируются, предыдущая версия сохраняется рядом как
+`lab-works.backup-<время>`.
 
 ## Быстрый старт
 

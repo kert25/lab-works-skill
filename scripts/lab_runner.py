@@ -13,6 +13,7 @@ Usage:
     py lab_runner.py --root <project-root> --lab N --action check-screenshot
     py lab_runner.py --root <project-root> --lab N --action read-guide [--out guide.txt]
     py lab_runner.py --root <project-root> --lab N --action init-text
+    py lab_runner.py --root <project-root> --action sync-builder
 
 Theme names and Cyrillic paths are read from UTF-8 JSON instead of shell
 arguments. The selected lab record must contain `theme`; report content and
@@ -263,6 +264,32 @@ def validate_state(root, lab_number, state, lab):
         fail("поле labs должно быть объектом")
     validate_lab_state(root, lab_number, lab)
     print("STATE VALID: lab %d" % lab_number)
+
+
+def sync_builder(root):
+    """Rewrite the project's generated `_tools/make_docx.py` from the canonical builder.
+
+    The canonical builder is `scripts/make_docx.py` in the same directory as this
+    runner, so no path outside the project is hardcoded and the action works on
+    any machine and under any skill directory name.  Reports built through
+    `build-report` already import the canonical module directly; the copy only
+    matters for a manual `py _tools/make_docx.py ...` run, which is why it must
+    not drift.
+    """
+    canonical = Path(__file__).resolve().parent / "make_docx.py"
+    if not canonical.is_file():
+        fail("не найден канонический сборщик рядом с runner: %s" % canonical)
+    expected = hashlib.sha256(canonical.read_bytes()).hexdigest()
+    target = Path(root) / "_tools" / "make_docx.py"
+    if target.is_file() and hashlib.sha256(target.read_bytes()).hexdigest() == expected:
+        print("BUILDER ok %s" % target)
+        return
+    status = "updated" if target.is_file() else "created"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(canonical, target)
+    if hashlib.sha256(target.read_bytes()).hexdigest() != expected:
+        fail("копия сборщика не совпала с каноном по SHA-256: %s" % target)
+    print("BUILDER %s %s" % (status, target))
 
 
 def atomic_build_docx(output_path, *build_args, **build_kwargs):
@@ -1027,18 +1054,23 @@ def init_text(root, lab_number, lab):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=".", help="корень проекта; по умолчанию текущий каталог")
-    parser.add_argument("--lab", type=int, required=True, help="номер ЛР")
+    parser.add_argument("--lab", type=int, help="номер ЛР; не нужен только для действия sync-builder")
     parser.add_argument(
         "--action", required=True,
         choices=(
             "validate-state", "build-report", "build-text", "build-pdf", "inspect-documents",
             "prepare-report", "verify-report", "quality-gate", "verify-quality",
-            "check-screenshot", "capture-cli", "read-guide", "init-text",
+            "check-screenshot", "capture-cli", "read-guide", "init-text", "sync-builder",
         ),
     )
     parser.add_argument("--out", help="файл вывода read-guide")
     args = parser.parse_args()
     root = Path(args.root).resolve()
+    if args.action == "sync-builder":
+        sync_builder(root)
+        return
+    if args.lab is None:
+        parser.error("--lab обязателен для действия %s" % args.action)
     state = load_state(root)
     lab = get_lab(state, args.lab)
     if args.action == "validate-state":

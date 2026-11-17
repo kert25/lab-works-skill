@@ -583,5 +583,42 @@ class ReadGuideAndInitTextTest(unittest.TestCase):
         self.assertTrue(any("Ответ:" in p for p in p_texts))
 
 
+class SyncBuilderTest(unittest.TestCase):
+    """`sync-builder` must follow the canonical builder wherever it lives."""
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tempdir.name)
+        self.canonical = (SCRIPTS / "make_docx.py").read_bytes()
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def test_creates_the_copy_with_canonical_bytes(self):
+        lab_runner.sync_builder(self.root)
+        copied = self.root / "_tools" / "make_docx.py"
+        self.assertEqual(copied.read_bytes(), self.canonical)
+
+    def test_replaces_a_stale_copy(self):
+        stale = self.root / "_tools" / "make_docx.py"
+        stale.parent.mkdir(parents=True)
+        stale.write_text("# old builder\n", encoding="utf-8")
+        lab_runner.sync_builder(self.root)
+        self.assertEqual(stale.read_bytes(), self.canonical)
+
+    def test_second_run_is_idempotent(self):
+        lab_runner.sync_builder(self.root)
+        copied = self.root / "_tools" / "make_docx.py"
+        first = copied.stat().st_mtime_ns
+        lab_runner.sync_builder(self.root)
+        self.assertEqual(copied.read_bytes(), self.canonical)
+        self.assertEqual(copied.stat().st_mtime_ns, first)
+
+    def test_does_not_require_lab_state(self):
+        self.assertFalse((self.root / "_lab_state.json").exists())
+        lab_runner.sync_builder(self.root)
+        self.assertTrue((self.root / "_tools" / "make_docx.py").is_file())
+
+
 if __name__ == "__main__":
     unittest.main()

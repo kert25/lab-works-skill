@@ -125,5 +125,43 @@ class InstallSkillTest(unittest.TestCase):
             install_skill.install(self.source, self.source / "nested")
 
 
+class DefaultTargetsTest(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.home = Path(self.tempdir.name)
+        self.agents_skills = self.home / ".agents" / "skills"
+        self.agents_skills.mkdir(parents=True)
+        self.gemini_skills = self.home / ".gemini" / "config" / "skills"
+        self.gemini_skills.mkdir(parents=True)
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def checkout(self, name):
+        directory = self.agents_skills / name
+        directory.mkdir()
+        (directory / "SKILL.md").write_text("---\nname: lab-works\n---\n", encoding="utf-8")
+        return directory
+
+    def test_checkout_with_other_name_is_not_duplicated(self):
+        source = self.checkout("lab-works-skill")
+        targets = install_skill.default_targets(home=self.home, source=source)
+        self.assertEqual([path.parent for path in targets], [self.gemini_skills])
+
+    def test_missing_conventional_target_is_still_installed(self):
+        source = self.home / "repo"
+        source.mkdir()
+        (source / "SKILL.md").write_text("---\nname: lab-works\n---\n", encoding="utf-8")
+        targets = install_skill.default_targets(home=self.home, source=source)
+        self.assertEqual([path.name for path in targets], ["lab-works", "lab-works"])
+
+    def test_existing_target_is_kept_even_next_to_checkout(self):
+        source = self.checkout("lab-works-skill")
+        installed = self.agents_skills / "lab-works"
+        installed.mkdir()
+        targets = install_skill.default_targets(home=self.home, source=source)
+        self.assertEqual([path.parent for path in targets], [self.agents_skills, self.gemini_skills])
+
+
 if __name__ == "__main__":
     unittest.main()

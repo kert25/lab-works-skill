@@ -13,6 +13,10 @@ skill roots. By default the script updates:
     ~/.agents/skills/lab-works
     ~/.gemini/config/skills/lab-works
 
+Those names are conventions: when the skill already exists as a checkout under
+another name in the same skill root (e.g. `lab-works-skill`), that default is
+skipped instead of creating a duplicate, and `--target` selects the real copy.
+
 Only files that belong to the skill are copied: development-only paths
 (.git, .skill-eval/workspace, vendored tooling, caches), repository
 documents (docs/, SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md,
@@ -176,12 +180,28 @@ def install(source: Path, target: Path, make_backup: bool = True) -> str:
     return "installed" if backup is None else "installed (backup: %s)" % backup.name
 
 
-def default_targets() -> list[Path]:
-    home = Path.home()
-    return [path for path in (
+def default_targets(home: Path | None = None, source: Path = SOURCE) -> list[Path]:
+    """Return the conventional install directories, skipping duplicates of a checkout.
+
+    The default names are `lab-works`, but on a machine where the skill already
+    lives as a git checkout in the same skill root (for example
+    `~/.agents/skills/lab-works-skill`) creating `~/.agents/skills/lab-works`
+    would add a second, silently drifting copy.  Such a target is skipped and an
+    explicit `--target` is required to install a copy deliberately.
+    """
+    home = Path.home() if home is None else home
+    source_parent = source.resolve().parent
+    candidates = [path for path in (
         home / ".agents" / "skills" / "lab-works",
         home / ".gemini" / "config" / "skills" / "lab-works",
     ) if path.parent.is_dir()]
+    targets = []
+    for path in candidates:
+        if not path.exists() and path.resolve().parent == source_parent:
+            print("%s: пропущен, скилл уже лежит здесь как %s" % (path, source.resolve().name))
+            continue
+        targets.append(path)
+    return targets
 
 
 def main() -> None:

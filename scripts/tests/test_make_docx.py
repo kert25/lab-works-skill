@@ -297,5 +297,85 @@ class DocumentRobustnessTest(unittest.TestCase):
         self.assertIn("<w:titlePg/>", titled)
 
 
+class PackagePartsTest(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tempdir.name)
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def build(self, content, header=None, name="doc.docx"):
+        output = self.root / name
+        make_docx.build(str(output), 1, "Topic", content, str(self.root), None,
+                        title=False, header=header)
+        return output
+
+    def parts(self, output):
+        with zipfile.ZipFile(output) as archive:
+            return sorted(archive.namelist())
+
+    def test_settings_part_declares_its_own_content_type(self):
+        output = self.build([{"p": "Body"}])
+        with zipfile.ZipFile(output) as archive:
+            content_types = archive.read("[Content_Types].xml").decode("utf-8")
+        self.assertIn("word/settings.xml", self.parts(output))
+        self.assertIn(
+            '<Override PartName="/word/settings.xml" ContentType='
+            '"application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>',
+            content_types,
+        )
+
+    def test_autohyphenation_settings_are_written_for_every_document(self):
+        output = self.build([{"p": "Body"}])
+        with zipfile.ZipFile(output) as archive:
+            settings = archive.read("word/settings.xml").decode("utf-8")
+        self.assertIn('<w:autoHyphenation w:val="true"/>', settings)
+        self.assertIn('<w:doNotHyphenateCaps w:val="true"/>', settings)
+
+    def test_header_is_absent_without_explicit_text(self):
+        output = self.build([{"p": "Body"}])
+        with zipfile.ZipFile(output) as archive:
+            document = archive.read("word/document.xml").decode("utf-8")
+            rels = archive.read("word/_rels/document.xml.rels").decode("utf-8")
+            content_types = archive.read("[Content_Types].xml").decode("utf-8")
+        self.assertNotIn("word/header1.xml", self.parts(output))
+        self.assertNotIn("headerReference", document)
+        self.assertNotIn("header1.xml", rels)
+        self.assertNotIn("wordprocessingml.header+xml", content_types)
+
+    def test_header_text_produces_bold_italic_right_aligned_part(self):
+        output = self.build([{"p": "Body"}], header="Иванов И. И.")
+        with zipfile.ZipFile(output) as archive:
+            header = archive.read("word/header1.xml").decode("utf-8")
+            document = archive.read("word/document.xml").decode("utf-8")
+            content_types = archive.read("[Content_Types].xml").decode("utf-8")
+        self.assertIn("Иванов И. И.", header)
+        self.assertIn("<w:i/>", header)
+        self.assertIn("<w:b/>", header)
+        self.assertIn('<w:sz w:val="20"/>', header)
+        self.assertIn('<w:jc w:val="right"/>', header)
+        self.assertIn('<w:headerReference w:type="default" r:id="rIdHdr"/>', document)
+        self.assertIn("wordprocessingml.header+xml", content_types)
+
+    def test_header_reference_precedes_footer_reference(self):
+        output = self.build([{"p": "Body"}], header="Иванов И. И.")
+        with zipfile.ZipFile(output) as archive:
+            document = archive.read("word/document.xml").decode("utf-8")
+        self.assertLess(document.index("w:headerReference"), document.index("w:footerReference"))
+
+    def test_width_cm_limits_a_wide_figure(self):
+        write_png(self.root / "wide.png", width=2000, height=1000)
+        default = self.build([{"img": "wide.png"}], name="default.docx")
+        narrow = self.build([{"img": "wide.png", "width_cm": 10}], name="narrow.docx")
+        with zipfile.ZipFile(default) as archive:
+            default_extent = archive.read("word/document.xml").decode("utf-8")
+        with zipfile.ZipFile(narrow) as archive:
+            narrow_extent = archive.read("word/document.xml").decode("utf-8")
+        self.assertIn('cx="%d"' % (int(16.5 / 2.54 * 96) * 9525), default_extent)
+        self.assertIn('cx="%d"' % (int(10 / 2.54 * 96) * 9525), narrow_extent)
+        self.assertNotEqual(default_extent, narrow_extent)
+
+
 if __name__ == "__main__":
     unittest.main()
