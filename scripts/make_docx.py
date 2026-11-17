@@ -756,7 +756,7 @@ def build(out, num, theme, content, workdir, ctx=None, title=True, header=None):
             rid = "rIdImg%d" % rid_n
             drawing, data = image_xml(resolve(item["img"]), rid, rid_n,
                                       item.get("width_cm"))
-            paras.append(para(drawing, jc="center", first_line=None,
+            paras.append(para(drawing, jc="center", first_line=None, keep_next=True,
                               spacing_before=120, spacing_after=60, line=240))
             if item.get("caption"):
                 figure_caption = numbered_caption(item["caption"], "Рисунок", figure_number, FIGURE_CAPTION)
