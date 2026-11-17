@@ -847,7 +847,7 @@ def write_quality_record(root, lab_number, lab, report_path, pdf_path, text_path
         "sha256": quality_hashes(root, lab_number, lab, report_path, pdf_path, text_path),
     }
     output = lab_dir / "quality_gate.json"
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=lab_dir, delete=False,
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="\n", dir=lab_dir, delete=False,
                                      prefix=".quality_gate-", suffix=".tmp") as stream:
         json.dump(record, stream, ensure_ascii=False, indent=2)
         stream.write("\n")
@@ -876,7 +876,7 @@ def write_quality_record(root, lab_number, lab, report_path, pdf_path, text_path
                     "checks": list(CHECK_NAMES),
                     "warnings": list(record["warnings"]),
                 }
-                with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=root, delete=False,
+                with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="\n", dir=root, delete=False,
                                                  prefix="._lab_state-", suffix=".tmp") as stream:
                     json.dump(state_data, stream, ensure_ascii=False, indent=2)
                     stream.write("\n")
@@ -1045,7 +1045,7 @@ def init_text(root, lab_number, lab):
         items.append({"p": "Ответ: [Сформулируйте ответ]"})
 
     text_content_path.parent.mkdir(parents=True, exist_ok=True)
-    with text_content_path.open("w", encoding="utf-8") as stream:
+    with text_content_path.open("w", encoding="utf-8", newline="\n") as stream:
         json.dump(items, stream, ensure_ascii=False, indent=2)
         stream.write("\n")
     print("INITIALIZED %s (%d элементов)" % (text_content_path, len(items)))
