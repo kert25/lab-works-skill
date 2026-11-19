@@ -36,6 +36,7 @@
 | Отчёт | `.docx` по ГОСТ 7.32: титульник, рисунки, таблицы, листинги | `make_docx.py`, `--action build-report` |
 | PDF | DOCX → PDF через Word COM, затем LibreOffice | `docx2pdf.ps1`, `--action build-pdf` |
 | Конспект | `text.docx`: сценарий показа и ответы на контрольные вопросы | `--action init-text`, `--action build-text` |
+| Объём | лимит страниц для печатного отчёта: `report_size` в состоянии, проверка в гейте | `--action quality-gate` |
 | Проверка | структура и содержание отчёта + SHA-256-манифест артефактов | `--action quality-gate`, `--action verify-quality` |
 | Установка | обновление копий в каталогах агента с бэкапом и сверкой хешей | `install_skill.py` |
 

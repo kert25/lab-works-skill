@@ -224,6 +224,20 @@ def validate_verification(value, lab_number):
                  (lab_number, field))
 
 
+def validate_report_size(value, lab_number):
+    """Validate the optional per-lab report volume settings."""
+    if not isinstance(value, dict):
+        fail("labs.%d.report_size должен быть объектом" % lab_number)
+    printing = value.get("printing")
+    if printing is not None and not isinstance(printing, bool):
+        fail("labs.%d.report_size.printing должен быть true или false" % lab_number)
+    max_pages = value.get("max_pages")
+    if max_pages is not None:
+        if isinstance(max_pages, bool) or not isinstance(max_pages, int) or max_pages < 2:
+            fail("labs.%d.report_size.max_pages должен быть целым числом не меньше 2 или null" %
+                 lab_number)
+
+
 def validate_lab_state(root, lab_number, lab):
     """Validate portable state metadata without requiring report outputs."""
     get_lab({"labs": {str(lab_number): lab}}, lab_number)
@@ -257,6 +271,8 @@ def validate_lab_state(root, lab_number, lab):
             print("TOOL %s -> %s" % (key, resolved))
     if "verification" in lab:
         validate_verification(lab["verification"], lab_number)
+    if "report_size" in lab:
+        validate_report_size(lab["report_size"], lab_number)
 
 
 def validate_state(root, lab_number, state, lab):
@@ -745,6 +761,17 @@ def collapsed_text(value):
     return re.sub(r"\s+", "", value)
 
 
+def report_page_limit(lab):
+    """Return the explicit page limit of a lab, or None when there is no limit."""
+    size = lab.get("report_size")
+    if not isinstance(size, dict):
+        return None
+    limit = size.get("max_pages")
+    if isinstance(limit, int) and not isinstance(limit, bool) and limit >= 2:
+        return limit
+    return None
+
+
 def verify_report_structure(root, lab_number, lab):
     """Check report substance: sections, figures, tables, notes and PDF pages.
 
@@ -794,12 +821,21 @@ def verify_report_structure(root, lab_number, lab):
         if marker in lowered_notes:
             fail("в text.docx остались заглушки конспекта: «%s»" % marker)
     pages = pdf_page_count(pdf_path)
+    limit = report_page_limit(lab)
     if pages is None:
         warnings.append("PDF-бэкенд (pymupdf/pypdf/pdftotext) недоступен: число страниц PDF не проверено")
+        if limit is not None:
+            warnings.append("лимит %d страниц (report_size.max_pages) не проверен: нет PDF-бэкенда" %
+                            limit)
     elif pages < 2:
         fail("PDF содержит %d страницу: собран только титульный лист" % pages)
-    print("STRUCTURE OK: разделов %d, рисунков %d, таблиц %d, страниц PDF %s" %
-          (len(headings), images, tables, pages if pages is not None else "?"))
+    elif limit is not None and pages > limit:
+        fail("PDF отчёта: %d страниц при лимите %d (labs.%d.report_size.max_pages); "
+             "сократите отчёт — теорию, листинги или размер рисунков — и соберите PDF заново" %
+             (pages, limit, lab_number))
+    print("STRUCTURE OK: разделов %d, рисунков %d, таблиц %d, страниц PDF %s%s" %
+          (len(headings), images, tables, pages if pages is not None else "?",
+           " (лимит %d)" % limit if limit is not None else ""))
     return warnings
 
 

@@ -358,6 +358,33 @@ class RunnerStateValidationTest(unittest.TestCase):
         state = {"labs": {"1": {"theme": "Topic"}}}
         lab_runner.validate_state(self.root, 1, state, state["labs"]["1"])
 
+    def test_state_validation_accepts_report_size(self):
+        lab_runner.validate_lab_state(
+            self.root, 1,
+            {"theme": "Topic", "report_size": {"printing": True, "max_pages": 15}},
+        )
+        lab_runner.validate_lab_state(
+            self.root, 1, {"theme": "Topic", "report_size": {"max_pages": None}}
+        )
+
+    def test_state_validation_rejects_bad_report_size(self):
+        with self.assertRaisesRegex(SystemExit, "max_pages"):
+            lab_runner.validate_lab_state(
+                self.root, 1, {"theme": "Topic", "report_size": {"max_pages": "15"}}
+            )
+        with self.assertRaisesRegex(SystemExit, "max_pages"):
+            lab_runner.validate_lab_state(
+                self.root, 1, {"theme": "Topic", "report_size": {"max_pages": 1}}
+            )
+        with self.assertRaisesRegex(SystemExit, "printing"):
+            lab_runner.validate_lab_state(
+                self.root, 1, {"theme": "Topic", "report_size": {"printing": "yes"}}
+            )
+        with self.assertRaisesRegex(SystemExit, "объектом"):
+            lab_runner.validate_lab_state(
+                self.root, 1, {"theme": "Topic", "report_size": "15"}
+            )
+
 
 class RunnerQualityRecordTest(unittest.TestCase):
     def setUp(self):
@@ -458,6 +485,32 @@ class ReportStructureGateTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(SystemExit, "заглушки"):
             lab_runner.quality_gate(self.root, 1, self.lab)
+
+    def test_gate_rejects_report_over_page_limit(self):
+        write_pdf(
+            self.lab_dir / "Отчет_ЛР1.pdf",
+            pages=("Page one", "Page two", "Page three"),
+        )
+        lab = dict(self.lab)
+        lab["report_size"] = {"printing": True, "max_pages": 2}
+        with self.assertRaisesRegex(SystemExit, "лимите 2"):
+            lab_runner.quality_gate(self.root, 1, lab)
+        self.assertFalse((self.lab_dir / "quality_gate.json").exists())
+
+    def test_gate_accepts_report_within_page_limit(self):
+        lab = dict(self.lab)
+        lab["report_size"] = {"printing": True, "max_pages": 2}
+        lab_runner.quality_gate(self.root, 1, lab)
+        record = json.loads((self.lab_dir / "quality_gate.json").read_text(encoding="utf-8"))
+        self.assertEqual(record["status"], "passed")
+
+    def test_gate_ignores_page_limit_without_pdf_backend(self):
+        lab = dict(self.lab)
+        lab["report_size"] = {"printing": True, "max_pages": 2}
+        with patch.object(lab_runner, "pdf_page_count", return_value=None):
+            lab_runner.quality_gate(self.root, 1, lab)
+        record = json.loads((self.lab_dir / "quality_gate.json").read_text(encoding="utf-8"))
+        self.assertTrue(record["warnings"])
 
     def test_gate_records_warning_without_pymupdf(self):
         with patch.object(lab_runner, "pdf_page_count", return_value=None):
